@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import random
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from .config import Settings
 from .prompt import build_system_prompt, build_user_turn
@@ -159,3 +162,76 @@ def fallback_reply(persona: PersonaConfig, user_speech_text: str | None) -> Doll
         emotion=emotion,
         heard_text=(user_speech_text or "").strip(),
     )
+
+
+# ---- text-only structured helpers (persona drafts, quotes, scene effects) ---------------------
+
+T = TypeVar("T", bound=BaseModel)
+
+
+async def structured_text(settings: Settings, system: str, user: str, schema: type[T]) -> tuple[T | None, str]:
+    """Returns (parsed, provider). `parsed` is None when no LLM is configured (caller falls back)."""
+    provider = settings.resolved_llm_provider()
+    try:
+        if provider == "gemini":
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=settings.gemini_api_key)
+            resp = await client.aio.models.generate_content(
+                model=settings.gemini_model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    temperature=1.0,
+                    max_output_tokens=1024,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            if isinstance(getattr(resp, "parsed", None), schema):
+                return resp.parsed, provider
+            return schema.model_validate_json(_strip_fences(resp.text or "")), provider
+        if provider == "openai":
+            import openai
+
+            client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            completion = await client.chat.completions.parse(
+                model=settings.openai_model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                response_format=schema,
+                temperature=1.0,
+                max_tokens=600,
+            )
+            msg = completion.choices[0].message
+            if isinstance(getattr(msg, "parsed", None), schema):
+                return msg.parsed, provider
+            return schema.model_validate_json(_strip_fences(msg.content or "")), provider
+    except Exception as exc:
+        raise LLMError(f"{provider} request failed: {exc}") from exc
+    return None, "fallback"
+
+
+def _strip_fences(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").removeprefix("json").strip()
+    return raw
+
+
+_EFFECT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("rain", ("rain", "storm", "drizzle", "monsoon")),
+    ("snow", ("snow", "winter", "blizzard", "frost", "christmas")),
+    ("steam", ("coffee", "tea", "latte", "cocoa", "ramen", "soup", "bath", "onsen", "cafe", "café")),
+    ("petals", ("blossom", "sakura", "flower", "petal", "spring", "garden", "autumn", "leaves")),
+    ("sparkle", ("star", "night", "galaxy", "fairy", "lights", "glitter", "sea", "ocean", "sunset", "neon")),
+]
+
+
+def fallback_effect(prompt: str) -> str:
+    text = prompt.lower()
+    for effect, words in _EFFECT_KEYWORDS:
+        if any(w in text for w in words):
+            return effect
+    return "none"

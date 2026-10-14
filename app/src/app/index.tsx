@@ -41,10 +41,16 @@ export default function HomeScreen() {
       style={{ backgroundColor: colors.bg }}
       contentContainerStyle={[styles.container, { paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.xl }]}>
       <Title>Hi, I&apos;m {profile.dollName}!</Title>
-      <Text style={styles.subtitle}>
-        {profile.relationship}
-        {profile.idolReference ? ` · inspired by ${profile.idolReference}` : ''}
-      </Text>
+      {profile.relationship ? (
+        <Text style={styles.subtitle} numberOfLines={2}>
+          {profile.relationship}
+        </Text>
+      ) : null}
+      {!profile.acceptedTermsAt && (
+        <Text style={styles.notice} onPress={() => router.push('/setup')}>
+          Please review and confirm your doll in setup before calling.
+        </Text>
+      )}
 
       <View style={styles.stage}>
         <PlushieAvatar source={profile.photoUri} size={200} emotion="idle" />
@@ -57,7 +63,12 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      <Button title="Video call" icon="📹" onPress={() => router.push('/call')} style={styles.cta} />
+      <Button
+        title="Video call"
+        icon="📹"
+        onPress={() => router.push(profile.acceptedTermsAt ? '/call' : '/setup')}
+        style={styles.cta}
+      />
       <Button
         title="Wallpaper studio"
         icon="🖼️"
@@ -73,6 +84,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { paddingHorizontal: space.lg, alignItems: 'stretch' },
   subtitle: { color: colors.inkSoft, fontSize: 16, marginTop: 4 },
+  notice: { color: colors.pinkDeep, fontSize: 14, marginTop: space.sm, fontWeight: '600' },
   stage: {
     marginVertical: space.lg,
     alignItems: 'center',

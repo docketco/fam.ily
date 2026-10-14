@@ -2,14 +2,15 @@ import type { ReactNode } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-/** Drag with one finger, pinch to resize. Position is relative to the parent's top-left. */
+/** Drag with one finger, pinch to resize, optional long-press. Position is relative to the parent. */
 export function Draggable({
   children,
   initialX,
   initialY,
   initialScale = 1,
-  minScale = 0.4,
+  minScale = 0.3,
   maxScale = 3,
+  onLongPress,
 }: {
   children: ReactNode;
   initialX: number;
@@ -17,6 +18,7 @@ export function Draggable({
   initialScale?: number;
   minScale?: number;
   maxScale?: number;
+  onLongPress?: () => void;
 }) {
   const x = useSharedValue(initialX);
   const y = useSharedValue(initialY);
@@ -41,6 +43,12 @@ export function Draggable({
       scale.value = Math.min(maxScale, Math.max(minScale, start.value.scale * e.scale));
     });
 
+  const longPress = Gesture.LongPress()
+    .minDuration(550)
+    .enabled(!!onLongPress)
+    .runOnJS(true)
+    .onStart(() => onLongPress?.());
+
   const style = useAnimatedStyle(() => ({
     position: 'absolute',
     left: 0,
@@ -49,7 +57,7 @@ export function Draggable({
   }));
 
   return (
-    <GestureDetector gesture={Gesture.Simultaneous(pan, pinch)}>
+    <GestureDetector gesture={Gesture.Simultaneous(pan, pinch, longPress)}>
       <Animated.View style={style}>{children}</Animated.View>
     </GestureDetector>
   );

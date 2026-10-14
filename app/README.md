@@ -12,11 +12,16 @@ npm run typecheck && npm run lint
   The same worklet functions run on the UI thread (live) and in JS (frame export).
 - `src/features/call/`: camera + push-to-talk (expo-camera, expo-audio). A snapshot and the voice
   clip go to the backend, then the reply plays back while the doll bounces.
-- `src/features/setup/`: persona form and voice picker. The profile is stored in AsyncStorage,
-  and the photo is copied into the app's document directory.
-- `src/features/studio/`: 9:16 canvas, SVG scenes, draggable/pinchable doll and stickers.
-  Export steps a shared clock through a seamless 5 s loop, snapshots each frame
-  (react-native-view-shot), has the backend encode the MP4, and saves it with expo-media-library.
+- `src/features/setup/`: free-text persona form with "Write the rest with AI", AI voice design,
+  and the original-character confirmation. The profile is stored in AsyncStorage (older profiles
+  are migrated), and the photo is copied into the app's document directory.
+- `src/features/studio/`: 9:16 canvas with AI-painted scenes, AI stickers, AI-picked ambient
+  motion, and a draggable/pinchable doll. Export steps a shared clock through a seamless 5 s loop,
+  snapshots each frame (react-native-view-shot), and has the backend encode an MP4. On iOS,
+  `modules/live-photo` turns that MP4 into a Live Photo.
+- `modules/live-photo/`: local Expo module in Swift. It writes a key photo and a paired .mov that
+  share a content identifier (plus the still-image-time marker), then saves both as one Live
+  Photo with PhotoKit. It builds only in EAS/dev builds, not in Expo Go.
 
 Environment: `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_APP_KEY` (see `.env.example`, `eas.json`).
 Cloud builds: see the root README.

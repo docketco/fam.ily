@@ -6,8 +6,8 @@ import { meteringToLevel } from '@/features/call/metering';
 const persona = {
   doll_name: 'Jinnie',
   idol_identity: '',
-  personality_tags: [],
-  relationship_type: 'bestie',
+  personality: 'chaotic',
+  relationship_type: 'my hype-man',
   custom_lore: null,
   elevenlabs_voice_id: 'v',
 };
@@ -42,7 +42,29 @@ describe('DollApi', () => {
 
   it('reports network failures with a null status', async () => {
     const api = new DollApi('http://s', jest.fn().mockRejectedValue(new TypeError('Network request failed')));
-    await expect(api.voices()).rejects.toMatchObject({ status: null, message: "Can't reach the doll server" });
+    await expect(api.generateScene('rainy cafe')).rejects.toMatchObject({ status: null, message: "Can't reach the doll server" });
+  });
+});
+
+describe('DollApi AI helpers', () => {
+  it('posts JSON prompts to the generation endpoints', async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ image_base64: 'AA==', mime_type: 'image/png', effect: 'rain', provider: 'gemini' }));
+    const api = new DollApi('http://s', fetchMock);
+    const scene = await api.generateScene('my grandma’s garden at dusk');
+    expect(scene.effect).toBe('rain');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://s/api/scene/generate');
+    expect(JSON.parse(init.body)).toEqual({ prompt: 'my grandma’s garden at dusk' });
+  });
+
+  it('sends output_fps only for Live Photo renders', async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse({}));
+    const api = new DollApi('http://s', fetchMock);
+    await api.renderWallpaper([{ uri: 'file:///f.jpg', name: 'f.jpg', type: 'image/jpeg' }], 12, 1, 30);
+    const form = fetchMock.mock.calls[0][1].body as FormData;
+    expect(form.get('output_fps')).toBe('30');
+    await api.renderWallpaper([{ uri: 'file:///f.jpg', name: 'f.jpg', type: 'image/jpeg' }], 12, 2);
+    expect((fetchMock.mock.calls[1][1].body as FormData).get('output_fps')).toBeNull();
   });
 });
 

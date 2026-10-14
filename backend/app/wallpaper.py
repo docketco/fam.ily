@@ -11,7 +11,8 @@ class EncodeError(RuntimeError):
     pass
 
 
-def encode_mp4(frames: list[bytes], fps: int, repeat: int = 1) -> bytes:
+def encode_mp4(frames: list[bytes], fps: int, repeat: int = 1, output_fps: int | None = None) -> bytes:
+    """`output_fps` > `fps` duplicates frames (Live Photos expect a normal camera frame rate)."""
     if not frames:
         raise EncodeError("No frames supplied")
 
@@ -34,7 +35,7 @@ def encode_mp4(frames: list[bytes], fps: int, repeat: int = 1) -> bytes:
             # H.264 needs even dimensions; yuv420p + faststart keeps iOS Photos and Android happy.
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-r", str(fps), "-movflags", "+faststart", "-an",
+            "-r", str(output_fps or fps), "-movflags", "+faststart", "-an",
             str(out),
         ]
         proc = subprocess.run(cmd, capture_output=True, timeout=120)

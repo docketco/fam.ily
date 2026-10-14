@@ -1,6 +1,5 @@
 import { appKey, stripSlash } from './config';
 import type { PersonaConfig } from './profile';
-import type { Voice } from './voices';
 
 export type BackendEmotion = 'HAPPY' | 'SURPRISED' | 'TEASING' | 'SLEEPY';
 
@@ -15,11 +14,39 @@ export interface ReactResponse {
   tts_provider: string;
 }
 
+export type Provider = 'gemini' | 'openai' | 'fallback';
+
 export interface Health {
   status: 'ok';
-  llm_provider: 'gemini' | 'openai' | 'fallback';
+  llm_provider: Provider;
   tts_provider: 'elevenlabs' | 'none';
+  image_provider: Provider;
   auth_required: boolean;
+}
+
+export type SceneEffect = 'none' | 'rain' | 'snow' | 'sparkle' | 'steam' | 'petals';
+
+export interface GeneratedImage {
+  image_base64: string;
+  mime_type: string;
+  provider: string;
+}
+
+export interface GeneratedScene extends GeneratedImage {
+  effect: SceneEffect;
+}
+
+export interface PersonaDraft {
+  relationship: string;
+  personality: string;
+  backstory: string;
+  voice_description: string;
+}
+
+export interface DesignedVoice {
+  generated_voice_id: string;
+  audio_base64: string;
+  audio_mime_type: string;
 }
 
 export interface VoicePreview {
@@ -107,30 +134,64 @@ export class DollApi {
     return res.json();
   }
 
-  async voices(): Promise<Voice[]> {
-    const res = await this.request('/api/voices', { headers: this.headers() }, 8000);
-    return res.json();
+  previewVoice(voiceId: string, text?: string): Promise<VoicePreview> {
+    return this.postJson('/api/voices/preview', { voice_id: voiceId, ...(text ? { text } : {}) }, 20000);
   }
 
-  async previewVoice(voiceId: string, text?: string): Promise<VoicePreview> {
+  private async postJson<T>(path: string, body: unknown, timeoutMs: number): Promise<T> {
     const res = await this.request(
-      '/api/voices/preview',
-      {
-        method: 'POST',
-        headers: this.headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ voice_id: voiceId, ...(text ? { text } : {}) }),
-      },
-      20000,
+      path,
+      { method: 'POST', headers: this.headers({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) },
+      timeoutMs,
     );
     return res.json();
   }
 
-  /** Uploads ordered frames of one loop and returns the encoded MP4 bytes. */
-  async renderWallpaper(frames: LocalFile[], fps: number, repeat = 1): Promise<ArrayBuffer> {
+  draftPersona(idea: string, dollName: string, inspiration: string): Promise<PersonaDraft> {
+    return this.postJson('/api/persona/draft', { idea, doll_name: dollName, inspiration }, 30000);
+  }
+
+  async quote(persona: PersonaConfig): Promise<string> {
+    const res = await this.postJson<{ quote: string }>('/api/doll/quote', persona, 20000);
+    return res.quote;
+  }
+
+  async designVoice(description: string, sampleText?: string): Promise<DesignedVoice[]> {
+    const res = await this.postJson<{ previews: DesignedVoice[] }>(
+      '/api/voices/design',
+      { description, ...(sampleText ? { sample_text: sampleText } : {}) },
+      60000,
+    );
+    return res.previews;
+  }
+
+  async saveVoice(generatedVoiceId: string, name: string, description: string): Promise<string> {
+    const res = await this.postJson<{ voice_id: string }>(
+      '/api/voices/save',
+      { generated_voice_id: generatedVoiceId, name, description },
+      30000,
+    );
+    return res.voice_id;
+  }
+
+  generateScene(prompt: string): Promise<GeneratedScene> {
+    return this.postJson('/api/scene/generate', { prompt }, 120000);
+  }
+
+  generateSticker(prompt: string): Promise<GeneratedImage> {
+    return this.postJson('/api/sticker/generate', { prompt }, 120000);
+  }
+
+  /**
+   * Uploads ordered frames of one loop and returns the encoded MP4 bytes.
+   * `outputFps` above `fps` repeats frames (Live Photos expect a camera-like 30 fps).
+   */
+  async renderWallpaper(frames: LocalFile[], fps: number, repeat = 1, outputFps?: number): Promise<ArrayBuffer> {
     const form = new FormData();
     frames.forEach((f) => form.append('frames', f as unknown as Blob));
     form.append('fps', String(fps));
     form.append('repeat', String(repeat));
+    if (outputFps) form.append('output_fps', String(outputFps));
     const res = await this.request(
       '/api/wallpaper/render',
       { method: 'POST', headers: this.headers({ Accept: 'video/mp4' }), body: form },

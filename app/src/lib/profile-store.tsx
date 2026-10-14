@@ -1,9 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { defaultApiUrl, stripSlash } from './config';
 import { DollApi } from './api';
+import { DemoApi, IS_DEMO } from './demo-api';
 import { type DollProfile, parseStoredProfile } from './profile';
 
 const STORAGE_KEY = 'doll-profile.v1';
@@ -22,8 +25,14 @@ const ProfileContext = createContext<ProfileContextValue | null>(null);
 /**
  * Copies a picked/taken photo into the app's document directory. Picker and camera results
  * live in caches the OS may purge, which would leave the saved profile without its doll.
+ * On the web there is no file system, so the photo is shrunk and kept as a data URI.
  */
-export function persistPhoto(sourceUri: string): string {
+export async function persistPhoto(sourceUri: string): Promise<string> {
+  if (Platform.OS === 'web') {
+    const rendered = await ImageManipulator.manipulate(sourceUri).resize({ width: 512 }).renderAsync();
+    const saved = await rendered.saveAsync({ compress: 0.8, format: SaveFormat.JPEG, base64: true });
+    return saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : saved.uri;
+  }
   const dir = new Directory(Paths.document, 'doll');
   if (!dir.exists) dir.create({ intermediates: true });
   const ext = sourceUri.split('?')[0].split('.').pop()?.toLowerCase();
@@ -71,7 +80,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, [profile?.photoUri]);
 
   const apiUrl = profile?.apiUrl || defaultApiUrl();
-  const api = useMemo(() => new DollApi(apiUrl), [apiUrl]);
+  const api = useMemo(() => (IS_DEMO ? new DemoApi() : new DollApi(apiUrl)), [apiUrl]);
 
   const value = useMemo(
     () => ({ profile, loaded, api, apiUrl, saveProfile, resetProfile }),

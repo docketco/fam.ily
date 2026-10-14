@@ -54,7 +54,8 @@
     "web": "expo start --web",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "build:demo": "EXPO_PUBLIC_DEMO=1 expo export --platform web --output-dir dist-demo"
   },
   "private": true,
   "jest": {

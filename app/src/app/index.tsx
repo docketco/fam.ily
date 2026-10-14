@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Title } from '@/components/ui';
 import { PlushieAvatar } from '@/features/doll/PlushieAvatar';
 import type { Health } from '@/lib/api';
+import { IS_DEMO } from '@/lib/demo-api';
 import { useProfile } from '@/lib/profile-store';
 import { colors, radius, space } from '@/lib/theme';
 
@@ -27,8 +28,11 @@ export default function HomeScreen() {
 
   if (!profile) return null;
 
-  const status =
-    health === null
+  const status = IS_DEMO
+    ? health !== null && health !== 'offline' && health.llm_provider !== 'fallback'
+      ? { text: 'Demo: replies and art come from Claude, voice from your device', color: '#2F855A' }
+      : { text: 'Demo with sample replies', color: '#B7791F' }
+    : health === null
       ? { text: 'Checking connection…', color: colors.inkSoft }
       : health === 'offline'
         ? { text: `Server unreachable at ${apiUrl}`, color: colors.danger }

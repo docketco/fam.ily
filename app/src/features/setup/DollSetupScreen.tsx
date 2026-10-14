@@ -46,6 +46,13 @@ export function DollSetupScreen() {
   const [drafting, setDrafting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Alert does nothing on the web, so problems are also shown inline above the save button.
+  const report = useCallback((title: string, message: string) => {
+    setFormError(message);
+    if (Platform.OS !== 'web') Alert.alert(title, message);
+  }, []);
 
   const update = useCallback(<K extends keyof DollProfile>(key: K, value: DollProfile[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -58,7 +65,7 @@ export function DollSetupScreen() {
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission needed', `Allow ${fromCamera ? 'camera' : 'photo'} access in Settings to add your plushie.`);
+      report('Permission needed', `Allow ${fromCamera ? 'camera' : 'photo'} access in Settings to add your plushie.`);
       return;
     }
     const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.85 };
@@ -80,7 +87,7 @@ export function DollSetupScreen() {
         voiceDescription: (d.voice_description || cur.voiceDescription).slice(0, LIMITS.voiceDescription),
       }));
     } catch (err) {
-      Alert.alert("Couldn't write that", (err as Error).message);
+      report("Couldn't write that", (err as Error).message);
     } finally {
       setDrafting(false);
     }
@@ -89,23 +96,28 @@ export function DollSetupScreen() {
   async function save() {
     const error = validateProfile(draft);
     if (error) {
-      Alert.alert('Almost there', error);
+      report('Almost there', error);
       return;
     }
+    setFormError(null);
     setSaving(true);
     try {
-      const photoUri = pickedUri ? persistPhoto(pickedUri) : draft.photoUri;
+      const photoUri = pickedUri ? await persistPhoto(pickedUri) : draft.photoUri;
       await saveProfile({ ...draft, photoUri });
       if (router.canGoBack()) router.back();
       else router.replace('/');
     } catch (err) {
-      Alert.alert('Could not save', (err as Error).message);
+      report('Could not save', (err as Error).message);
     } finally {
       setSaving(false);
     }
   }
 
   function confirmReset() {
+    if (Platform.OS === 'web') {
+      resetProfile();
+      return;
+    }
     Alert.alert('Start over?', 'This deletes your doll profile from this phone.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => resetProfile() },
@@ -124,8 +136,12 @@ export function DollSetupScreen() {
           </View>
           <View style={styles.row}>
             <Button title="Gallery" icon="🖼️" variant="secondary" onPress={() => pickPhoto(false)} style={styles.flex} />
-            <View style={{ width: space.sm }} />
-            <Button title="Camera" icon="📷" variant="secondary" onPress={() => pickPhoto(true)} style={styles.flex} />
+            {Platform.OS !== 'web' && (
+              <>
+                <View style={{ width: space.sm }} />
+                <Button title="Camera" icon="📷" variant="secondary" onPress={() => pickPhoto(true)} style={styles.flex} />
+              </>
+            )}
           </View>
         </Section>
 
@@ -210,6 +226,7 @@ export function DollSetupScreen() {
           </>
         )}
 
+        {formError ? <Text style={styles.formError}>{formError}</Text> : null}
         <Button title={profile ? 'Save changes' : 'Bring my doll to life ✨'} onPress={save} loading={saving} />
         {profile && <Button title="Delete doll" variant="ghost" onPress={confirmReset} style={{ marginTop: space.sm }} />}
       </ScrollView>
@@ -260,4 +277,5 @@ const styles = StyleSheet.create({
   checkboxOn: { backgroundColor: colors.pinkDeep, borderColor: colors.pinkDeep },
   check: { color: '#fff', fontWeight: '900', fontSize: 14 },
   termsText: { flex: 1, color: colors.inkSoft, fontSize: 13, lineHeight: 19 },
+  formError: { color: colors.danger, fontWeight: '600', textAlign: 'center', marginBottom: space.sm },
 });

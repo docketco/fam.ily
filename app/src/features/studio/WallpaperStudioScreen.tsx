@@ -21,6 +21,7 @@ import { Button, Chip } from '@/components/ui';
 import { PlushieAvatar } from '@/features/doll/PlushieAvatar';
 import { LOOP_SECONDS } from '@/features/doll/pose';
 import type { SceneEffect } from '@/lib/api';
+import { IS_DEMO } from '@/lib/demo-api';
 import { deleteQuietly, writeImageToCache } from '@/lib/audio';
 import { toPersonaConfig } from '@/lib/profile';
 import { useProfile } from '@/lib/profile-store';
@@ -101,6 +102,7 @@ export function WallpaperStudioScreen() {
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState<{ fraction: number; label: string } | null>(null);
   const [savedKind, setSavedKind] = useState<ExportKind | null>(null);
+  const [studioError, setStudioError] = useState<string | null>(null);
 
   // Canvas is always 9:16 so exports match phone wallpapers.
   const canvasH = Math.min(screenH * 0.58, ((screenW - space.md * 2) * 16) / 9);
@@ -123,9 +125,16 @@ export function WallpaperStudioScreen() {
 
   if (!profile) return null;
 
+  // Alert does nothing on the web, so problems are also shown inline.
+  function report(title: string, message: string) {
+    setStudioError(message);
+    if (Platform.OS !== 'web') Alert.alert(title, message);
+  }
+
   async function paintScene() {
     if (scenePrompt.trim().length < 2 || paintingScene) return;
     setPaintingScene(true);
+    setStudioError(null);
     try {
       const res = await api.generateScene(scenePrompt.trim());
       const uri = writeImageToCache(res.image_base64, res.mime_type, 'scene');
@@ -133,7 +142,7 @@ export function WallpaperStudioScreen() {
       setSceneUri(uri);
       setEffect(res.effect);
     } catch (err) {
-      Alert.alert("Couldn't paint that", (err as Error).message);
+      report("Couldn't paint that", (err as Error).message);
     } finally {
       setPaintingScene(false);
     }
@@ -142,10 +151,11 @@ export function WallpaperStudioScreen() {
   async function makeSticker() {
     if (stickerPrompt.trim().length < 2 || makingSticker) return;
     if (stickers.length >= MAX_STICKERS) {
-      Alert.alert('That is a lot of stickers', 'Long-press a sticker on the canvas to remove it.');
+      report('That is a lot of stickers', 'Long-press a sticker on the canvas to remove it.');
       return;
     }
     setMakingSticker(true);
+    setStudioError(null);
     try {
       const prompt = stickerPrompt.trim();
       const res = await api.generateSticker(prompt);
@@ -154,13 +164,17 @@ export function WallpaperStudioScreen() {
       setStickers((s) => [...s, { id: `${Date.now()}`, uri, prompt }]);
       setStickerPrompt('');
     } catch (err) {
-      Alert.alert("Couldn't make that sticker", (err as Error).message);
+      report("Couldn't make that sticker", (err as Error).message);
     } finally {
       setMakingSticker(false);
     }
   }
 
   function removeSticker(s: Sticker) {
+    if (Platform.OS === 'web') {
+      setStickers((all) => all.filter((x) => x.id !== s.id));
+      return;
+    }
     Alert.alert('Remove sticker?', s.prompt, [
       { text: 'Keep', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: () => setStickers((all) => all.filter((x) => x.id !== s.id)) },
@@ -174,7 +188,7 @@ export function WallpaperStudioScreen() {
       setQuote(await api.quote(toPersonaConfig(profile)));
       setBubbleOn(true);
     } catch (err) {
-      Alert.alert("Couldn't write a line", (err as Error).message);
+      report("Couldn't write a line", (err as Error).message);
     } finally {
       setQuoting(false);
     }
@@ -195,7 +209,7 @@ export function WallpaperStudioScreen() {
       else await exportAnimated({ kind, canvasRef, clock, api, onProgress: (fraction, label) => setProgress({ fraction, label }) });
       setSavedKind(kind);
     } catch (err) {
-      Alert.alert('Export failed', (err as Error).message);
+      report('Export failed', (err as Error).message);
     } finally {
       setExporting(false);
       setProgress(null);
@@ -294,8 +308,15 @@ export function WallpaperStudioScreen() {
         </Pressable>
       </View>
 
+      {studioError ? <Text style={styles.studioError}>{studioError}</Text> : null}
+
       {/* ---- export ---- */}
-      {progress ? (
+      {IS_DEMO ? (
+        <Text style={styles.demoNote}>
+          In the phone app, this is where you save your wallpaper as a Live Photo (iPhone), a looping video (Android) or a
+          still image.
+        </Text>
+      ) : progress ? (
         <View style={styles.progressBox}>
           <Text style={styles.progressLabel}>{progress.label}</Text>
           <View style={styles.progressTrack}>
@@ -387,6 +408,15 @@ const styles = StyleSheet.create({
   bubbleText: { color: colors.ink, fontWeight: '700' },
   bubbleTail: { position: 'absolute', bottom: -6, left: 18, width: 12, height: 12, backgroundColor: '#fff', transform: [{ rotate: '45deg' }] },
   exportBtn: { marginBottom: space.sm },
+  studioError: { color: colors.danger, fontWeight: '600', marginTop: space.md },
+  demoNote: {
+    marginTop: space.lg,
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.pinkSoft,
+    color: colors.ink,
+    lineHeight: 20,
+  },
   progressBox: { marginTop: space.lg },
   progressLabel: { color: colors.ink, fontWeight: '600', marginBottom: space.sm },
   progressTrack: { height: 10, borderRadius: 5, backgroundColor: colors.pinkSoft, overflow: 'hidden' },

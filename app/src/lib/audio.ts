@@ -24,7 +24,7 @@ export function deleteQuietly(uri: string | null | undefined) {
   }
 }
 
-const IMAGE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const IMAGE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
 
 /** Writes a base64 image to the cache directory and returns its file URI. */
 export function writeImageToCache(base64: string, mime: string, prefix: string): string {

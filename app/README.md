@@ -23,5 +23,10 @@ npm run typecheck && npm run lint
   share a content identifier (plus the still-image-time marker), then saves both as one Live
   Photo with PhotoKit. It builds only in EAS/dev builds, not in Expo Go.
 
+Browser demo: `npm run build:demo` builds a web version (`EXPO_PUBLIC_DEMO=1`, see
+`src/lib/demo-api.ts`) for publishing as a claude.ai artifact. There, AI requests go to Claude
+through the artifact runtime instead of the backend, the call screen uses a picked photo and
+typed messages instead of the camera and microphone, and exports are turned off.
+
 Environment: `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_APP_KEY` (see `.env.example`, `eas.json`).
 Cloud builds: see the root README.

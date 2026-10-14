@@ -23,11 +23,6 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_transcribe_model: str = "gpt-4o-mini-transcribe"
 
-    # Image generation for AI scenes and stickers ("auto": Gemini, then OpenAI, then a local placeholder).
-    image_provider: Literal["auto", "gemini", "openai", "fallback"] = "auto"
-    gemini_image_model: str = "gemini-2.5-flash-image"
-    openai_image_model: str = "gpt-image-1"
-
     elevenlabs_api_key: str | None = None
     elevenlabs_model_id: str = "eleven_flash_v2_5"
     elevenlabs_output_format: str = "mp3_44100_128"
@@ -37,21 +32,6 @@ class Settings(BaseSettings):
 
     max_image_bytes: int = 8 * 1024 * 1024
     max_audio_bytes: int = 10 * 1024 * 1024
-    max_wallpaper_frames: int = 150
-    max_wallpaper_frame_bytes: int = 2 * 1024 * 1024
-
-    def resolved_image_provider(self) -> Literal["gemini", "openai", "fallback"]:
-        if self.image_provider == "gemini":
-            return "gemini" if self.gemini_api_key else "fallback"
-        if self.image_provider == "openai":
-            return "openai" if self.openai_api_key else "fallback"
-        if self.image_provider == "fallback":
-            return "fallback"
-        if self.gemini_api_key:
-            return "gemini"
-        if self.openai_api_key:
-            return "openai"
-        return "fallback"
 
     def resolved_llm_provider(self) -> Literal["gemini", "openai", "fallback"]:
         if self.llm_provider == "gemini":

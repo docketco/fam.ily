@@ -1,5 +1,3 @@
-import { DemoCallScreen } from '@/features/call/DemoCallScreen';
-import { DollCallScreen } from '@/features/call/DollCallScreen';
-import { IS_DEMO } from '@/lib/demo-api';
+import { VoiceCallScreen } from '@/features/talk/VoiceCallScreen';
 
-export default IS_DEMO ? DemoCallScreen : DollCallScreen;
+export default VoiceCallScreen;

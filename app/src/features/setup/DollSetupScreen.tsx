@@ -20,6 +20,7 @@ import { Button, Section } from '@/components/ui';
 import { PlushieAvatar } from '@/features/doll/PlushieAvatar';
 import { defaultApiUrl } from '@/lib/config';
 import { type DollProfile, emptyProfile, LIMITS, validateProfile } from '@/lib/profile';
+import { cutOutPlushie } from '@/lib/cutout';
 import { persistPhoto, useProfile } from '@/lib/profile-store';
 import { colors, radius, space } from '@/lib/theme';
 
@@ -41,7 +42,12 @@ export function DollSetupScreen() {
   const { profile, saveProfile, resetProfile, api } = useProfile();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState<DollProfile>(() => profile ?? emptyProfile());
+  // The new photo the user picked, and (when it worked) the plushie cut out of it.
   const [pickedUri, setPickedUri] = useState<string | null>(null);
+  const [cutoutUri, setCutoutUri] = useState<string | null>(null);
+  const [cutting, setCutting] = useState(false);
+  const [useCutout, setUseCutout] = useState(true);
+  const [cutoutNote, setCutoutNote] = useState<string | null>(null);
   const [idea, setIdea] = useState('');
   const [drafting, setDrafting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,9 +74,22 @@ export function DollSetupScreen() {
       report('Permission needed', `Allow ${fromCamera ? 'camera' : 'photo'} access in Settings to add your plushie.`);
       return;
     }
-    const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.85 };
+    const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], allowsEditing: true, quality: 0.9 };
     const result = fromCamera ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
-    if (!result.canceled && result.assets[0]) setPickedUri(result.assets[0].uri);
+    if (result.canceled || !result.assets[0]) return;
+    const uri = result.assets[0].uri;
+    setPickedUri(uri);
+    setCutoutUri(null);
+    setUseCutout(true);
+    setCutoutNote(null);
+    setCutting(true);
+    try {
+      setCutoutUri((await cutOutPlushie(uri, api)).uri);
+    } catch {
+      setCutoutNote("Couldn't lift your plushie off this background. A photo on a plain background works best.");
+    } finally {
+      setCutting(false);
+    }
   }
 
   async function writeWithAi() {
@@ -102,8 +121,12 @@ export function DollSetupScreen() {
     setFormError(null);
     setSaving(true);
     try {
-      const photoUri = pickedUri ? await persistPhoto(pickedUri) : draft.photoUri;
-      await saveProfile({ ...draft, photoUri });
+      let { photoUri, photoIsCutout } = draft;
+      if (pickedUri) {
+        photoIsCutout = useCutout && !!cutoutUri;
+        photoUri = await persistPhoto(photoIsCutout ? cutoutUri! : pickedUri);
+      }
+      await saveProfile({ ...draft, photoUri, photoIsCutout });
       if (router.canGoBack()) router.back();
       else router.replace('/');
     } catch (err) {
@@ -124,15 +147,17 @@ export function DollSetupScreen() {
     ]);
   }
 
-  const previewUri = pickedUri ?? draft.photoUri;
+  const showingCutout = pickedUri ? useCutout && !!cutoutUri : draft.photoIsCutout;
+  const previewUri = pickedUri ? (showingCutout ? cutoutUri : pickedUri) : draft.photoUri;
   const accepted = !!draft.acceptedTermsAt;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
-        <Section title="Your plushie" hint="A photo on a plain background looks cutest. Square crop works best.">
+        <Section title="Your plushie" hint="Your plushie is lifted off the background automatically. A plain background works best.">
           <View style={styles.photoBox}>
-            <PlushieAvatar source={previewUri} size={170} />
+            <PlushieAvatar source={previewUri} cutout={showingCutout} size={190} emotion={cutting ? 'thinking' : 'idle'} />
+            {cutting && <Text style={styles.cutoutStatus}>Cutting out your plushie…</Text>}
           </View>
           <View style={styles.row}>
             <Button title="Gallery" icon="🖼️" variant="secondary" onPress={() => pickPhoto(false)} style={styles.flex} />
@@ -144,6 +169,13 @@ export function DollSetupScreen() {
             )}
           </View>
         </Section>
+
+        {pickedUri && cutoutUri ? (
+          <Pressable accessibilityRole="switch" accessibilityState={{ checked: useCutout }} onPress={() => setUseCutout((u) => !u)} style={styles.cutoutToggle}>
+            <Text style={styles.cutoutToggleText}>{useCutout ? 'Background removed · Use original photo' : 'Original photo · Remove background'}</Text>
+          </Pressable>
+        ) : null}
+        {cutoutNote ? <Text style={styles.cutoutNote}>{cutoutNote}</Text> : null}
 
         <Section title="Name">
           <Field value={draft.dollName} onChangeText={(t) => update('dollName', t)} placeholder="What's their name?" maxLength={LIMITS.dollName} />
@@ -277,5 +309,9 @@ const styles = StyleSheet.create({
   checkboxOn: { backgroundColor: colors.pinkDeep, borderColor: colors.pinkDeep },
   check: { color: '#fff', fontWeight: '900', fontSize: 14 },
   termsText: { flex: 1, color: colors.inkSoft, fontSize: 13, lineHeight: 19 },
+  cutoutStatus: { marginTop: space.sm, color: colors.pinkDeep, fontWeight: '600' },
+  cutoutToggle: { alignSelf: 'center', paddingVertical: space.xs, paddingHorizontal: space.md, marginTop: -space.sm, marginBottom: space.md },
+  cutoutToggleText: { color: colors.pinkDeep, fontWeight: '700', fontSize: 13 },
+  cutoutNote: { color: colors.inkSoft, fontSize: 13, textAlign: 'center', marginTop: -space.sm, marginBottom: space.md, paddingHorizontal: space.md },
   formError: { color: colors.danger, fontWeight: '600', textAlign: 'center', marginBottom: space.sm },
 });

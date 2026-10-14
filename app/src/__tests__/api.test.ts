@@ -1,7 +1,8 @@
-import { ApiError, DollApi } from '@/lib/api';
-import { formatDuration } from '@/features/call/useCallTimer';
 import { toDollEmotion } from '@/features/call/emotion';
 import { meteringToLevel } from '@/features/call/metering';
+import { formatDuration } from '@/features/call/useCallTimer';
+import { ApiError, DollApi } from '@/lib/api';
+import { parseStoredMessages, toHistory, type Message } from '@/lib/conversation';
 
 const persona = {
   doll_name: 'Jinnie',
@@ -17,22 +18,24 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('DollApi', () => {
-  it('posts multipart form data to /api/doll/react', async () => {
+  it('sends chat turns with mode and history, without a snapshot', async () => {
     const fetchMock = jest.fn().mockResolvedValue(
-      jsonResponse({ spoken_text: 'hi', emotion: 'HAPPY', heard_text: 'yo', audio_base64: '', audio_mime_type: '' }),
+      jsonResponse({ spoken_text: 'hi', emotion: 'LOVING', heard_text: 'yo', audio_base64: '', audio_mime_type: '' }),
     );
     const api = new DollApi('http://server:8000/', fetchMock);
     const res = await api.react({
-      snapshot: { uri: 'file:///a.jpg', name: 'a.jpg', type: 'image/jpeg' },
       persona,
+      mode: 'chat',
       userSpeechText: 'look',
-      userAudio: { uri: 'file:///q.m4a', name: 'q.m4a', type: 'audio/mp4' },
+      history: [{ role: 'user', text: 'earlier' }],
     });
-    expect(res.spoken_text).toBe('hi');
+    expect(res.emotion).toBe('LOVING');
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://server:8000/api/doll/react');
-    expect(init.method).toBe('POST');
-    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get('mode')).toBe('chat');
+    expect(JSON.parse(form.get('history') as string)).toEqual([{ role: 'user', text: 'earlier' }]);
+    expect(form.get('snapshot')).toBeNull();
   });
 
   it('surfaces the server detail message on errors', async () => {
@@ -42,29 +45,27 @@ describe('DollApi', () => {
 
   it('reports network failures with a null status', async () => {
     const api = new DollApi('http://s', jest.fn().mockRejectedValue(new TypeError('Network request failed')));
-    await expect(api.generateScene('rainy cafe')).rejects.toMatchObject({ status: null, message: "Can't reach the doll server" });
+    await expect(api.cutout({ uri: 'file:///p.jpg', name: 'p.jpg', type: 'image/jpeg' })).rejects.toMatchObject({
+      status: null,
+      message: "Can't reach the doll server",
+    });
   });
 });
 
-describe('DollApi AI helpers', () => {
-  it('posts JSON prompts to the generation endpoints', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ image_base64: 'AA==', mime_type: 'image/png', effect: 'rain', provider: 'gemini' }));
-    const api = new DollApi('http://s', fetchMock);
-    const scene = await api.generateScene('my grandma’s garden at dusk');
-    expect(scene.effect).toBe('rain');
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://s/api/scene/generate');
-    expect(JSON.parse(init.body)).toEqual({ prompt: 'my grandma’s garden at dusk' });
+describe('conversation memory', () => {
+  const msg = (i: number, role: 'user' | 'doll'): Message => ({ id: `${i}`, role, text: `line ${i}`, via: 'chat', at: i });
+
+  it('sends only the most recent turns to the AI', () => {
+    const many = Array.from({ length: 30 }, (_, i) => msg(i, i % 2 ? 'doll' : 'user'));
+    const history = toHistory(many);
+    expect(history).toHaveLength(16);
+    expect(history[15]).toEqual({ role: 'doll', text: 'line 29' });
   });
 
-  it('sends output_fps only for Live Photo renders', async () => {
-    const fetchMock = jest.fn().mockResolvedValue(jsonResponse({}));
-    const api = new DollApi('http://s', fetchMock);
-    await api.renderWallpaper([{ uri: 'file:///f.jpg', name: 'f.jpg', type: 'image/jpeg' }], 12, 1, 30);
-    const form = fetchMock.mock.calls[0][1].body as FormData;
-    expect(form.get('output_fps')).toBe('30');
-    await api.renderWallpaper([{ uri: 'file:///f.jpg', name: 'f.jpg', type: 'image/jpeg' }], 12, 2);
-    expect((fetchMock.mock.calls[1][1].body as FormData).get('output_fps')).toBeNull();
+  it('reads stored messages defensively', () => {
+    expect(parseStoredMessages(JSON.stringify([msg(1, 'user'), { role: 'boss', text: 'x', id: '2' }]))).toHaveLength(1);
+    expect(parseStoredMessages('{oops')).toEqual([]);
+    expect(parseStoredMessages(null)).toEqual([]);
   });
 });
 
@@ -77,6 +78,7 @@ describe('call helpers', () => {
 
   it('maps backend emotions', () => {
     expect(toDollEmotion('SURPRISED')).toBe('surprised');
+    expect(toDollEmotion('POUTY')).toBe('pouty');
     expect(toDollEmotion('nope')).toBe('idle');
   });
 

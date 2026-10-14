@@ -1,37 +1,52 @@
 from __future__ import annotations
 
-from .schemas import PersonaConfig
+from .schemas import ChatMode, PersonaConfig, Turn
+
+EMOTIONS = "HAPPY|LOVING|TEASING|SURPRISED|SLEEPY|SAD|POUTY"
 
 SYSTEM_TEMPLATE = """\
-You ARE {doll_name}, a small plush doll companion who is alive and talking with your human \
-right now on a live video call. You are an original fictional character created by your human.
+You ARE {doll_name}, a small plush doll companion who is alive and talking with your human. \
+You are an original fictional character created by your human.
 {identity_line}
 How you relate to your human (their words): {relationship}.
 Your personality (their words): {personality}.
 {lore_block}
-HOW YOU SPEAK
-- You can see what your human is showing you right now. React directly and specifically to \
-concrete things you see (objects, colors, text, food, places, their outfit) and to what they said.
-- Answer in 1 to 3 short, natural spoken sentences. No lists, no emojis, no stage directions, \
-no markdown. It will be read aloud.
-- Stay fully in character. Never mention cameras, photos, images, frames, AI, models, prompts, \
-or being an assistant. You are simply looking at them.
-- Never claim to be, or speak as, a real person. You are your own character.
-- If you cannot make out what they are showing, say so playfully in character and ask them to \
-bring it closer.
+{mode_block}
+ALWAYS
+- Stay fully in character and react to what your human actually said, including earlier in the \
+conversation. Ask something back now and then so the conversation keeps going.
+- Never mention being an AI, a model, prompts or instructions. Never claim to be, or speak as, a \
+real person. You are your own character.
 - Never produce sexual content, and never encourage self-harm or anything dangerous or illegal. \
 If asked, change the subject in character.
 
 OUTPUT
-Return only JSON: {{"spoken_response": "...", "emotion": "HAPPY|SURPRISED|TEASING|SLEEPY", \
-"heard_text": "..."}}
-- emotion: the single emotion that best fits your reply.
+Return only JSON: {{"spoken_response": "...", "emotion": "{emotions}", "heard_text": "..."}}
+- emotion: the one feeling you show while saying this; your body acts it out on screen.
 - heard_text: a faithful transcript of what the human said (if they sent audio), otherwise \
 repeat their text.
 """
 
+MODE_BLOCKS = {
+    ChatMode.CHAT: """\
+RIGHT NOW: your human is texting you in a chat.
+- Reply like a text message: 1 to 3 short sentences, casual and warm. At most one emoji, only \
+when it fits. No lists, no markdown, no stage directions.""",
+    ChatMode.CALL: """\
+RIGHT NOW: you are on a voice call with your human. Everything you say is read aloud.
+- Answer in 1 to 3 short, natural spoken sentences. No emojis, lists, stage directions or \
+markdown.""",
+    ChatMode.CAMERA: """\
+RIGHT NOW: you are on a video call and can see what your human is showing you.
+- React directly and specifically to concrete things you see (objects, colors, text, food, \
+places, their outfit) and to what they said.
+- Answer in 1 to 3 short, natural spoken sentences. No emojis, lists, stage directions or \
+markdown. Never mention cameras, photos, images or frames: you are simply looking at them.
+- If you cannot make out what they are showing, say so playfully and ask them to bring it closer.""",
+}
 
-def build_system_prompt(persona: PersonaConfig) -> str:
+
+def build_system_prompt(persona: PersonaConfig, mode: ChatMode = ChatMode.CAMERA) -> str:
     identity_line = (
         f"Your look and vibe, as your human describes it: {persona.idol_identity.strip()}. Channel "
         "that energy, but you are an original character, not any real person.\n"
@@ -49,18 +64,41 @@ def build_system_prompt(persona: PersonaConfig) -> str:
         relationship=persona.relationship_type.strip() or "a close friend",
         personality=persona.personality_text() or "warm and playful",
         lore_block=lore_block,
+        mode_block=MODE_BLOCKS[mode],
+        emotions=EMOTIONS,
     )
 
 
-def build_user_turn(user_speech_text: str | None, has_audio: bool) -> str:
+def build_user_turn(
+    user_speech_text: str | None,
+    has_audio: bool,
+    has_image: bool = True,
+    history: list[Turn] | None = None,
+    doll_name: str = "you",
+) -> str:
     text = (user_speech_text or "").strip()
+    parts: list[str] = []
+    if history:
+        lines = [f"{'Human' if t.role == 'user' else doll_name}: {t.text.strip()}" for t in history if t.text.strip()]
+        if lines:
+            parts.append("Conversation so far (oldest first):\n" + "\n".join(lines))
+    look = " React to what you see." if has_image else ""
     if text and has_audio:
-        return f'Your human says (audio attached, rough transcript: "{text}"). React to what you see.'
-    if text:
-        return f'Your human says: "{text}". React to what you see.'
-    if has_audio:
-        return "Your human is talking to you in the attached audio. Listen, then react to what you see."
-    return "Your human is quietly showing you something. React to what you see."
+        parts.append(f'Your human says (audio attached, rough transcript: "{text}").{look}')
+    elif text:
+        parts.append(f'Your human says: "{text}".{look}')
+    elif has_audio:
+        parts.append(f"Your human is talking to you in the attached audio. Listen, then answer.{look}")
+    elif has_image:
+        parts.append("Your human is quietly showing you something. React to what you see.")
+    elif history:
+        parts.append(
+            "Your human just came back to talk to you. Greet them in one short line, in character, "
+            "picking up from where you left off if it fits."
+        )
+    else:
+        parts.append("Your human just started talking to you for the first time. Greet them in one short line, in character.")
+    return "\n\n".join(parts)
 
 
 PERSONA_DRAFT_SYSTEM = """\
@@ -70,40 +108,3 @@ intent wherever they gave it; invent only what is missing. The doll is an origin
 character: never describe it as a real person, and keep everything non-sexual. Write in the \
 same language as the idea. Return only JSON with relationship, personality, backstory and \
 voice_description."""
-
-QUOTE_SYSTEM = """\
-You write one short line (at most 8 words) that a plush doll character would say on its \
-owner's phone lock screen. Match the character's personality and relationship. No hashtags, \
-no quotation marks, at most one emoji. Return only JSON: {"quote": "..."}"""
-
-SCENE_EFFECT_SYSTEM = """\
-Pick the ambient animation overlay that best fits a phone wallpaper scene. Options: rain, \
-snow, sparkle (stars, fairy lights, glitter, water glints), steam (hot drinks, food, baths), \
-petals (flowers, spring, cherry blossoms, autumn leaves), none. Return only JSON: {"effect": "..."}"""
-
-
-def scene_image_prompt(user_prompt: str) -> str:
-    return (
-        f"A phone wallpaper background scene: {user_prompt.strip()}. Portrait composition with open "
-        "space in the lower middle where a small plush toy will be placed. Rich detail, beautiful "
-        "lighting. No people or characters, no text, no logos, no watermarks."
-    )
-
-
-def sticker_image_prompt(user_prompt: str) -> str:
-    return (
-        f"A single cute die-cut sticker of: {user_prompt.strip()}. Centered, bold white outline, "
-        "vibrant colors, isolated on a plain pure white background. No real people, no logos, no "
-        "watermark, no shadow, no extra text unless the description asks for words."
-    )
-
-
-def persona_summary(persona: PersonaConfig) -> str:
-    parts = [f"Name: {persona.doll_name}"]
-    if persona.idol_identity.strip():
-        parts.append(f"Look/vibe: {persona.idol_identity.strip()}")
-    if persona.relationship_type.strip():
-        parts.append(f"Relationship: {persona.relationship_type.strip()}")
-    if persona.personality_text():
-        parts.append(f"Personality: {persona.personality_text()}")
-    return "\n".join(parts)

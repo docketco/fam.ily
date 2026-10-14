@@ -30,6 +30,7 @@ import { PlushieAvatar } from '@/features/doll/PlushieAvatar';
 import type { DollEmotion } from '@/features/doll/pose';
 import { ApiError, type LocalFile } from '@/lib/api';
 import { deleteQuietly, writeAudioToCache } from '@/lib/audio';
+import { useConversation } from '@/lib/conversation';
 import { toPersonaConfig } from '@/lib/profile';
 import { useProfile } from '@/lib/profile-store';
 import { colors, radius, space } from '@/lib/theme';
@@ -46,6 +47,7 @@ const SNAPSHOT_WIDTH = 1024;
 
 export function DollCallScreen() {
   const { profile, api } = useProfile();
+  const { add, recentHistory } = useConversation();
   const insets = useSafeAreaInsets();
   const timer = useCallTimer();
 
@@ -178,12 +180,17 @@ export function DollCallScreen() {
     try {
       snapshot = await captureSnapshot();
       const res = await api.react({
-        snapshot,
         persona: toPersonaConfig(profile),
+        mode: 'camera',
+        snapshot,
         userSpeechText: text,
         userAudio: audio,
+        history: recentHistory(),
       });
       if (!mounted.current) return;
+      const said = (res.heard_text || text || '').trim();
+      if (said) add({ role: 'user', text: said, via: 'camera' });
+      add({ role: 'doll', text: res.spoken_text, via: 'camera', emotion: toDollEmotion(res.emotion) });
       setConnection(res.provider === 'fallback' ? 'demo' : 'online');
       setHeard(res.heard_text || text || '');
       setReply(res.spoken_text);
@@ -238,7 +245,7 @@ export function DollCallScreen() {
   if (!cameraPermission.granted) {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg, padding: space.lg }]}>
-        <PlushieAvatar source={profile.photoUri} size={140} emotion="thinking" />
+        <PlushieAvatar source={profile.photoUri} cutout={profile.photoIsCutout} size={160} emotion="thinking" />
         <Text style={styles.permTitle}>{profile.dollName} wants to see your world</Text>
         <Text style={styles.permBody}>Camera access lets your doll react to whatever you show it during a call.</Text>
         <Button
@@ -317,7 +324,7 @@ export function DollCallScreen() {
 
       {/* ---- doll overlay (bottom-right) ---- */}
       <View style={[styles.doll, { bottom: insets.bottom + 150 }]} pointerEvents="none">
-        <PlushieAvatar source={profile.photoUri} size={120} emotion={emotion} isSpeaking={phase === 'speaking'} showBadge />
+        <PlushieAvatar source={profile.photoUri} cutout={profile.photoIsCutout} size={140} emotion={emotion} isSpeaking={phase === 'speaking'} showBadge />
       </View>
 
       {/* ---- text input overlay (testing / quiet places) ---- */}

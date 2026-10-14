@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
-  s.name           = 'LivePhoto'
+  s.name           = 'SubjectCutout'
   s.version        = '1.0.0'
-  s.summary        = 'Turns a video into an iOS Live Photo and saves it to the photo library.'
+  s.summary        = 'Cuts the subject (the plushie) out of a photo on-device with Apple Vision.'
   s.description    = s.summary
   s.license        = 'MIT'
   s.author         = 'fam.ily'
@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'AVFoundation', 'Photos', 'ImageIO', 'UniformTypeIdentifiers', 'CoreMedia'
+  s.frameworks = 'Vision', 'CoreImage', 'UIKit'
 
   s.source_files = '**/*.{h,m,swift}'
   s.pod_target_xcconfig = {

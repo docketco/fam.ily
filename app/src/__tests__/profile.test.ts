@@ -60,6 +60,7 @@ describe('doll profile', () => {
       personality: 'Playful, Sassy',
       memories: 'Blue Bottle',
       photoUri: 'file:///doll/plushie.jpg',
+      photoIsCutout: false,
       acceptedTermsAt: null,
     });
     expect(validateProfile(migrated)).toMatch(/original character/);

@@ -16,6 +16,8 @@ export interface DollProfile {
   voiceId: string;
   /** Local file URI of the plushie photo, copied into the app's document directory. */
   photoUri: string | null;
+  /** True when `photoUri` is the plushie cut out of its background (transparent PNG). */
+  photoIsCutout: boolean;
   /** Optional override of the backend URL (useful for cloud builds / LAN testing). */
   apiUrl: string;
   /** When the user confirmed the doll is their own original character (see setup screen). */
@@ -54,6 +56,7 @@ export function emptyProfile(): DollProfile {
     voiceDescription: '',
     voiceId: '',
     photoUri: null,
+    photoIsCutout: false,
     apiUrl: '',
     acceptedTermsAt: null,
     createdAt: new Date().toISOString(),
@@ -111,6 +114,7 @@ export function parseStoredProfile(raw: string | null): DollProfile | null {
       voiceDescription: str(data.voiceDescription, LIMITS.voiceDescription),
       voiceId: str(data.voiceId, 64),
       photoUri: typeof data.photoUri === 'string' ? data.photoUri : null,
+      photoIsCutout: data.photoIsCutout === true,
       apiUrl: str(data.apiUrl, 300),
       // A doll saved before the confirmation existed counts as confirmed once the user
       // re-saves it in setup; until then validateProfile asks for it.

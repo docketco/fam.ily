@@ -29,6 +29,8 @@ const ProfileContext = createContext<ProfileContextValue | null>(null);
  */
 export async function persistPhoto(sourceUri: string): Promise<string> {
   if (Platform.OS === 'web') {
+    // Cutouts are already small transparent PNG data URIs; re-encoding as JPEG would lose the transparency.
+    if (sourceUri.startsWith('data:image/png')) return sourceUri;
     const rendered = await ImageManipulator.manipulate(sourceUri).resize({ width: 512 }).renderAsync();
     const saved = await rendered.saveAsync({ compress: 0.8, format: SaveFormat.JPEG, base64: true });
     return saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : saved.uri;

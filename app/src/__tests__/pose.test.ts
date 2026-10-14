@@ -1,5 +1,4 @@
-import { computePose, emotionHops, HOP_DURATION, hopOffset, LOOP_SECONDS, motionModeFor } from '@/features/doll/pose';
-import { frameTimes } from '@/features/studio/frames';
+import { computePose, emotionHops, HOP_DURATION, hopOffset, motionModeFor, type MotionMode } from '@/features/doll/pose';
 
 const samples = (n: number, span: number) => Array.from({ length: n }, (_, i) => (i / n) * span);
 
@@ -13,18 +12,24 @@ describe('pose math', () => {
     expect(maxRot).toBeLessThanOrEqual(2.0001);
   });
 
-  it('speaking pulses scale between 1.00 and 1.04 and bounces upward only', () => {
-    const poses = samples(400, 10).map((t) => computePose('speaking', t));
-    const scales = poses.map((p) => p.scaleX);
-    expect(Math.min(...scales)).toBeGreaterThanOrEqual(1 - 1e-9);
-    expect(Math.max(...scales)).toBeLessThanOrEqual(1.04 + 1e-9);
-    expect(Math.max(...scales)).toBeGreaterThan(1.035);
-    expect(Math.max(...poses.map((p) => p.translateY))).toBeLessThanOrEqual(1e-9);
+  it('talking adds a bounce and a 1.00-1.04 scale pulse on top of any emotion', () => {
+    const quiet = samples(400, 10).map((t) => computePose('idle', t, -1, false));
+    const talking = samples(400, 10).map((t) => computePose('idle', t, -1, true));
+    const pulse = talking.map((p, i) => p.scaleX / quiet[i].scaleX);
+    expect(Math.min(...pulse)).toBeGreaterThanOrEqual(1 - 1e-9);
+    expect(Math.max(...pulse)).toBeLessThanOrEqual(1.04 + 1e-9);
+    expect(Math.min(...talking.map((p) => p.translateY))).toBeLessThan(Math.min(...quiet.map((p) => p.translateY)));
   });
 
-  it('thinking tilts the head to one side', () => {
-    const rots = samples(100, 10).map((t) => computePose('thinking', t).rotateDeg);
-    expect(Math.min(...rots)).toBeGreaterThan(5);
+  it('gives each emotion its own body language', () => {
+    const avg = (mode: MotionMode, key: 'translateY' | 'rotateDeg' | 'translateX') =>
+      samples(200, 10).reduce((sum, t) => sum + computePose(mode, t)[key], 0) / 200;
+    expect(avg('thinking', 'rotateDeg')).toBeGreaterThan(5); // head tilt
+    expect(avg('sad', 'translateY')).toBeGreaterThan(3); // droops down
+    expect(avg('pouty', 'rotateDeg')).toBeLessThan(-6); // turns away
+    expect(avg('teasing', 'rotateDeg')).toBeLessThan(-4); // cocky tilt
+    const loving = samples(200, 10).map((t) => computePose('loving', t).translateX);
+    expect(Math.max(...loving) - Math.min(...loving)).toBeGreaterThan(8); // sways side to side
   });
 
   it('double hop goes up twice and lands back at rest', () => {
@@ -42,29 +47,11 @@ describe('pose math', () => {
     expect(air.shadowOpacity).toBeLessThan(ground.shadowOpacity);
   });
 
-  it('loop5 is exactly periodic so exported videos loop seamlessly', () => {
-    for (const t of samples(50, LOOP_SECONDS)) {
-      const a = computePose('loop5', t);
-      const b = computePose('loop5', t + LOOP_SECONDS);
-      expect(b.translateY).toBeCloseTo(a.translateY, 6);
-      expect(b.rotateDeg).toBeCloseTo(a.rotateDeg, 6);
-      expect(b.scaleY).toBeCloseTo(a.scaleY, 6);
-    }
-  });
-
-  it('maps emotions to motion', () => {
-    expect(motionModeFor('happy', true)).toBe('speaking');
-    expect(motionModeFor('thinking', false)).toBe('thinking');
-    expect(motionModeFor('sleepy', false)).toBe('sleepy');
-    expect(motionModeFor('teasing', false)).toBe('idle');
-    expect(emotionHops('surprised')).toBe(true);
-    expect(emotionHops('teasing')).toBe(false);
-  });
-
-  it('export frame times cover one loop without duplicating the first frame', () => {
-    const times = frameTimes(12, 5);
-    expect(times).toHaveLength(60);
-    expect(times[0]).toBe(0);
-    expect(times[times.length - 1]).toBeLessThan(5);
+  it('maps emotions to motion and hops', () => {
+    expect(motionModeFor('surprised')).toBe('happy');
+    expect(motionModeFor('pouty')).toBe('pouty');
+    expect(motionModeFor('speaking')).toBe('idle');
+    expect(emotionHops('loving')).toBe(true);
+    expect(emotionHops('sad')).toBe(false);
   });
 });

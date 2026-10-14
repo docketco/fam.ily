@@ -52,7 +52,6 @@ def test_health_reports_fallbacks(client):
         "status": "ok",
         "llm_provider": "fallback",
         "tts_provider": "none",
-        "image_provider": "fallback",
         "auth_required": False,
     }
 
@@ -75,8 +74,8 @@ def test_react_uses_llm_and_tts(client, monkeypatch):
     settings.elevenlabs_api_key = "e"
     seen = {}
 
-    async def fake_gemini(s, persona, image_bytes, image_mime, text, audio_bytes, audio_mime):
-        seen.update(persona=persona, mime=image_mime, audio=audio_bytes, audio_mime=audio_mime)
+    async def fake_gemini(s, req):
+        seen.update(persona=req.persona, mime=req.image_mime, audio=req.audio_bytes, audio_mime=req.audio_mime)
         return DollReply(spoken_response="  Is that   cake for me? ", emotion=Emotion.TEASING, heard_text="")
 
     async def fake_tts(s, text, voice_id):
@@ -150,15 +149,6 @@ def test_voices_and_preview(client):
     assert r.status_code == 200 and r.json()["tts_provider"] == "none"
 
 
-def test_wallpaper_render_produces_mp4(client):
-    c, _ = client
-    frames = [("frames", (f"{i}.jpg", jpeg((i * 20, 80, 160), (91, 161)), "image/jpeg")) for i in range(10)]
-    r = c.post("/api/wallpaper/render", data={"fps": "10", "repeat": "2"}, files=frames)
-    assert r.status_code == 200, r.text
-    assert r.headers["content-type"] == "video/mp4"
-    assert r.content[4:8] == b"ftyp"
-
-
 def test_parse_json_reply_handles_fences_and_bad_emotion():
     reply = llm._parse_json_reply('```json\n{"spoken_response": "hi", "emotion": "angry"}\n```')
     assert reply.spoken_response == "hi" and reply.emotion is Emotion.HAPPY
@@ -172,84 +162,13 @@ def test_system_prompt_contains_persona_and_rules():
     assert "Teasing but secretly soft" in prompt and "chaotic little hype-man" in prompt
     assert "original character" in prompt
     assert "Never mention cameras" in prompt
-    assert "HAPPY|SURPRISED|TEASING|SLEEPY" in prompt
+    assert "HAPPY|LOVING|TEASING|SURPRISED|SLEEPY|SAD|POUTY" in prompt
 
 
 def test_legacy_personality_tags_still_work():
     legacy = {k: v for k, v in PERSONA.items() if k != "personality"}
     assert "teasing, clingy" in build_system_prompt(PersonaConfig(**legacy))
 
-
-def png_bytes(color=(255, 255, 255), size=(80, 80), dot=(255, 0, 0)) -> bytes:
-    img = Image.new("RGB", size, color)
-    for x in range(30, 50):
-        for y in range(30, 50):
-            img.putpixel((x, y), dot)
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return buf.getvalue()
-
-
-def test_scene_fallback_returns_9x16_jpeg_and_keyword_effect(client):
-    c, _ = client
-    r = c.post("/api/scene/generate", json={"prompt": "rainy tokyo alley at night"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["provider"] == "fallback" and body["effect"] == "rain"
-    img = Image.open(io.BytesIO(base64.b64decode(body["image_base64"])))
-    assert img.format == "JPEG" and img.size == (1080, 1920)
-
-
-def test_scene_uses_image_model_and_llm_effect(client, monkeypatch):
-    c, settings = client
-    settings.gemini_api_key = "g"
-    seen = {}
-
-    async def fake_generate(s, p, kind):
-        seen["prompt"], seen["kind"] = p, kind
-        return jpeg(size=(800, 1000)), "gemini"
-
-    async def fake_structured(s, system, user, schema):
-        return schema(effect="petals"), "gemini"
-
-    monkeypatch.setattr("app.imagegen.generate", fake_generate)
-    monkeypatch.setattr(llm, "structured_text", fake_structured)
-    body = c.post("/api/scene/generate", json={"prompt": "my grandma's garden"}).json()
-    assert body["effect"] == "petals" and body["provider"] == "gemini"
-    assert "my grandma's garden" in seen["prompt"] and "No people" in seen["prompt"] and seen["kind"] == "scene"
-    assert Image.open(io.BytesIO(base64.b64decode(body["image_base64"]))).size == (1080, 1920)
-
-
-def test_scene_generation_failure_is_502(client, monkeypatch):
-    c, _ = client
-    from app import imagegen
-
-    async def boom(*a, **k):
-        raise imagegen.ImageGenError("declined")
-
-    monkeypatch.setattr(imagegen, "generate", boom)
-    assert c.post("/api/scene/generate", json={"prompt": "anything"}).status_code == 502
-
-
-def test_sticker_knocks_out_white_background(client, monkeypatch):
-    c, _ = client
-
-    async def fake_generate(s, p, kind):
-        return png_bytes(), "gemini"
-
-    monkeypatch.setattr("app.imagegen.generate", fake_generate)
-    body = c.post("/api/sticker/generate", json={"prompt": "strawberry milk"}).json()
-    img = Image.open(io.BytesIO(base64.b64decode(body["image_base64"])))
-    assert img.mode == "RGBA"
-    assert img.size == (20, 20)  # trimmed to the red square
-    assert img.getpixel((10, 10))[3] == 255
-
-
-def test_sticker_fallback_is_transparent_png(client):
-    c, _ = client
-    body = c.post("/api/sticker/generate", json={"prompt": "cat ears"}).json()
-    img = Image.open(io.BytesIO(base64.b64decode(body["image_base64"])))
-    assert img.format == "PNG" and img.getpixel((0, 0))[3] == 0
 
 
 def test_persona_draft(client, monkeypatch):
@@ -266,11 +185,6 @@ def test_persona_draft(client, monkeypatch):
     monkeypatch.setattr(llm, "structured_text", fake_structured)
     r = c.post("/api/persona/draft", json={"idea": "a sleepy bunny who roasts me", "doll_name": "Mochi"})
     assert r.json() == {"relationship": "r", "personality": "p", "backstory": "b", "voice_description": "v"}
-
-
-def test_quote(client):
-    c, _ = client
-    assert c.post("/api/doll/quote", json=PERSONA).json() == {"quote": "Jinnie missed you!"}
 
 
 def test_voice_design_requires_key_then_works(client, monkeypatch):
@@ -293,8 +207,95 @@ def test_voice_design_requires_key_then_works(client, monkeypatch):
     assert r.json() == {"voice_id": "voice-xyz"}
 
 
-def test_wallpaper_output_fps_duplicates_frames(client):
+
+def test_chat_mode_needs_no_snapshot_and_remembers_history(client, monkeypatch):
+    c, settings = client
+    settings.gemini_api_key = "g"
+    seen = {}
+
+    async def fake_gemini(s, req):
+        seen["system"], seen["user"], seen["mode"], seen["image"] = req.system(), req.user_turn(), req.mode, req.image_bytes
+        return DollReply(spoken_response="Strawberry milk again? Of course.", emotion=Emotion.LOVING, heard_text="")
+
+    monkeypatch.setattr(llm, "_gemini", fake_gemini)
+    history = [{"role": "user", "text": "I had a rough day"}, {"role": "doll", "text": "Come here, tell me everything."}]
+    r = c.post(
+        "/api/doll/react",
+        data={"persona_config": json.dumps(PERSONA), "user_speech_text": "I got strawberry milk", "mode": "chat", "history": json.dumps(history)},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["emotion"] == "LOVING"
+    assert seen["mode"].value == "chat" and seen["image"] is None
+    assert "texting you in a chat" in seen["system"]
+    assert "Human: I had a rough day" in seen["user"] and "Jinnie: Come here" in seen["user"]
+    assert seen["user"].endswith('Your human says: "I got strawberry milk".')
+
+
+def test_camera_mode_without_a_picture_becomes_a_call(client, monkeypatch):
+    c, settings = client
+    settings.gemini_api_key = "g"
+    seen = {}
+
+    async def fake_gemini(s, req):
+        seen["mode"], seen["system"] = req.mode, req.system()
+        return DollReply(spoken_response="Hi!", emotion=Emotion.HAPPY)
+
+    monkeypatch.setattr(llm, "_gemini", fake_gemini)
+    r = c.post("/api/doll/react", data={"persona_config": json.dumps(PERSONA), "user_speech_text": "hey", "mode": "camera"})
+    assert r.status_code == 200
+    assert seen["mode"].value == "call" and "voice call" in seen["system"] and "can see" not in seen["system"]
+
+
+def test_bad_history_is_rejected(client):
     c, _ = client
-    frames = [("frames", (f"{i}.jpg", jpeg((i * 20, 80, 160), (90, 160)), "image/jpeg")) for i in range(6)]
-    r = c.post("/api/wallpaper/render", data={"fps": "6", "output_fps": "30"}, files=frames)
-    assert r.status_code == 200 and r.content[4:8] == b"ftyp"
+    base = {"persona_config": json.dumps(PERSONA), "mode": "chat"}
+    assert c.post("/api/doll/react", data={**base, "history": "{oops"}).status_code == 422
+    assert c.post("/api/doll/react", data={**base, "history": json.dumps([{"role": "boss", "text": "x"}])}).status_code == 422
+
+
+def test_empty_turn_is_a_greeting():
+    from app.prompt import build_user_turn
+    from app.schemas import Turn
+
+    assert "first time" in build_user_turn("", has_audio=False, has_image=False)
+    back = build_user_turn("", has_audio=False, has_image=False, history=[Turn(role="user", text="bye")])
+    assert "came back" in back and "Human: bye" in back
+
+
+def test_history_is_capped_to_recent_turns(client, monkeypatch):
+    c, settings = client
+    settings.gemini_api_key = "g"
+    seen = {}
+
+    async def fake_gemini(s, req):
+        seen["n"] = len(req.history)
+        return DollReply(spoken_response="ok", emotion=Emotion.HAPPY)
+
+    monkeypatch.setattr(llm, "_gemini", fake_gemini)
+    history = [{"role": "user", "text": f"m{i}"} for i in range(40)]
+    c.post("/api/doll/react", data={"persona_config": json.dumps(PERSONA), "user_speech_text": "x", "mode": "chat", "history": json.dumps(history)})
+    assert seen["n"] == 16
+
+
+def test_cutout_removes_plain_background(client):
+    c, _ = client
+    img = Image.new("RGB", (200, 200), (240, 240, 245))
+    for x in range(60, 140):
+        for y in range(50, 160):
+            img.putpixel((x, y), (180, 120, 90))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=95)
+    r = c.post("/api/doll/cutout", files={"photo": ("p.jpg", buf.getvalue(), "image/jpeg")})
+    assert r.status_code == 200, r.text
+    out = Image.open(io.BytesIO(base64.b64decode(r.json()["image_base64"])))
+    assert out.mode == "RGBA" and out.getpixel((0, 0))[3] == 0
+    assert out.getpixel((out.width // 2, out.height // 2))[3] == 255
+    assert out.width < 120  # cropped to the plushie
+
+
+def test_cutout_rejects_busy_or_empty_results(client):
+    c, _ = client
+    plain = io.BytesIO()
+    Image.new("RGB", (100, 100), (250, 250, 250)).save(plain, "PNG")
+    assert c.post("/api/doll/cutout", files={"photo": ("p.png", plain.getvalue(), "image/png")}).status_code == 422
+    assert c.post("/api/doll/cutout", files={"photo": ("p.txt", b"hi", "text/plain")}).status_code == 415

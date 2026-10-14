@@ -1,3 +1,3 @@
-import { DollCallScreen } from '@/features/call/DollCallScreen';
+import { VoiceCallScreen } from '@/features/talk/VoiceCallScreen';
 
-export default DollCallScreen;
+export default VoiceCallScreen;

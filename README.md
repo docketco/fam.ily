@@ -1,35 +1,38 @@
 # fam.ily: idol doll companion
 
-A native iOS + Android app (React Native / Expo SDK 57) that brings a plushie to life. You show it
-the world through your camera, hold to talk, and it answers in character with its own voice.
-A small FastAPI backend handles the AI parts: vision LLM and ElevenLabs TTS.
+A native iOS + Android app (React Native / Expo SDK 57) that brings a plushie to life. You chat
+with it or call it, and it answers in character with its own voice while it acts out how it
+feels. A small FastAPI backend handles the AI parts: the LLM and ElevenLabs voices.
 
 ```
 app/       Expo app (TypeScript, expo-router). Built in the cloud with EAS Build.
-backend/   FastAPI service: /api/doll/react, voices, wallpaper video encoding.
+backend/   FastAPI service: the doll's replies, voices, plushie cutout fallback.
 ```
 
-| Module | Where |
+| Part | Where |
 | --- | --- |
-| 1. Brain & persona backend | `backend/app/` (`main.py`, `llm.py`, `tts.py`, `prompt.py`) |
-| 2. Animated 2.5D doll | `app/src/features/doll/PlushieAvatar.tsx`, `pose.ts` |
-| 3. Push-to-talk video call | `app/src/features/call/DollCallScreen.tsx` |
-| 4. Persona onboarding & storage | `app/src/features/setup/`, `app/src/lib/profile*.ts*` |
-| 5. Lock screen wallpaper studio | `app/src/features/studio/`, `backend/app/wallpaper.py`, `backend/app/imagegen.py` |
-| Live Photo export (iOS) | `app/modules/live-photo/` (local Expo native module, Swift) |
+| AI brain, persona and voices (backend) | `backend/app/` (`main.py`, `llm.py`, `prompt.py`, `tts.py`) |
+| Animated 2.5D doll | `app/src/features/doll/` (`PlushieAvatar.tsx`, `pose.ts`) |
+| Chat and voice call | `app/src/features/talk/` |
+| Camera "show & ask" call | `app/src/features/call/DollCallScreen.tsx` |
+| Doll setup and storage | `app/src/features/setup/`, `app/src/lib/profile*.ts*` |
+| Plushie cutout (on-device) | `app/modules/subject-cutout/` (Swift + Kotlin), fallback `backend/app/cutout.py` |
 
-Everything the user creates is free text and AI-powered: there are no preset relationships,
-personalities, voices, scenes or stickers.
+Everything the user writes about their doll is free text, and all of it becomes the AI's
+character instructions. There are no preset relationships or personalities.
 
-- **Doll**: describe it in your own words. "Write the rest with AI" drafts the relationship,
-  personality, backstory and voice description, and every field stays editable.
+- **Your doll**: pick a photo and the plushie is cut out of its background automatically: on
+  iPhone with Apple's built-in subject lifting (iOS 17+), on Android with Google ML Kit, with a
+  plain-background fallback on the server.
+- **Doll setup**: describe your doll in your own words. "Write the rest with AI" drafts the
+  relationship, personality, backstory and voice description, and every field stays editable.
 - **Voice**: describe how it sounds. ElevenLabs Voice Design generates takes, and you keep the one you like.
-- **Scenes**: describe any place or mood. An image model paints a 9:16 background, and the AI picks
-  an ambient motion (rain, snow, sparkle, petals, mist) that you can change.
-- **Stickers**: describe anything. AI makes a die-cut sticker with a transparent background.
-- **Speech bubble**: type a line, or let the doll write one in character.
-- **Exports**: a Live Photo on iOS (for a moving Lock Screen), a looping MP4 (Android video
-  wallpapers), or a still image.
+- **Chat**: text with your doll while it reacts on screen (happy, loving, teasing, surprised,
+  sleepy, sad, pouty). Replies can be read aloud.
+- **Voice call**: hold to talk; the doll answers out loud and acts it out. From a call you can
+  switch on the camera to show it something.
+- **One memory**: chat, calls and camera share one conversation, kept on the phone, and the
+  doll remembers what you talked about.
 
 ## Run it locally
 
@@ -44,14 +47,14 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 pytest
 ```
 
-Every key is optional, so you can develop offline. Without an LLM/image key the doll gives
-"demo" replies and the studio uses placeholder scenes and stickers. Without an ElevenLabs key
-there's no voice design, and the app speaks with the phone's built-in voice.
+Every key is optional, so you can develop offline. Without an LLM key the doll gives "demo"
+replies. Without an ElevenLabs key there's no voice design, and the app speaks with the
+phone's built-in voice.
 
 Try it with a real photo:
 
 ```bash
-curl -F snapshot=@toy.jpg -F 'user_speech_text=What do you think of my desk?' \
+curl -F mode=camera -F snapshot=@toy.jpg -F 'user_speech_text=What do you think of my desk?' \
   -F 'persona_config={"doll_name":"Mochi","idol_identity":"pastel streetwear, sleepy eyes","personality":"deadpan but secretly soft","relationship_type":"the friend who roasts me","elevenlabs_voice_id":"EXAVITQu4vr4xnSDxMaL"}' \
   http://localhost:8000/api/doll/react
 ```
@@ -92,8 +95,9 @@ For installable test builds and store builds:
 
 iOS builds need an Apple Developer account. EAS asks for it and manages certificates for you.
 
-The Live Photo exporter is native Swift code (`app/modules/live-photo`). It's compiled into
-EAS and development builds automatically, but it isn't available in Expo Go or on Android.
+The plushie cutout is native code (`app/modules/subject-cutout`). It's compiled into EAS and
+development builds automatically. In Expo Go, or on iPhones before iOS 17, the app uses the
+server fallback instead.
 
 ## Content and responsibility
 
@@ -102,10 +106,10 @@ EAS and development builds automatically, but it isn't available in Expo Go or o
 - Before saving, the user confirms that their doll is an original character, not affiliated
   with or endorsed by any real person, group or company, and that they're responsible for
   what they enter and generate.
-- Prompts tell the models to stay non-sexual and safe, never to speak as a real person, and
-  not to draw people in scenes. The AI providers' own content policies apply on top of that.
+- Prompts tell the models to stay non-sexual and safe and never to speak as a real person. The
+  AI providers' own content policies apply on top of that.
 - This is a product safeguard, not legal advice. Have a lawyer review your Terms of Service,
-  privacy policy (camera, microphone and voice data go to Google/OpenAI/ElevenLabs) and
+  privacy policy (chats, camera, microphone and voice data go to Google/OpenAI/ElevenLabs) and
   app store age rating before launch.
 
 ## Security notes

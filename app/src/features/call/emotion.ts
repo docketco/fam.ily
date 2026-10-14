@@ -5,6 +5,12 @@ export function toDollEmotion(e: BackendEmotion | string | undefined): DollEmoti
   switch (e) {
     case 'HAPPY':
       return 'happy';
+    case 'LOVING':
+      return 'loving';
+    case 'SAD':
+      return 'sad';
+    case 'POUTY':
+      return 'pouty';
     case 'SURPRISED':
       return 'surprised';
     case 'TEASING':

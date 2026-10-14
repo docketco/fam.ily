@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { ConversationProvider } from '@/lib/conversation';
 import { ProfileProvider, useProfile } from '@/lib/profile-store';
 import { colors } from '@/lib/theme';
 
@@ -29,8 +30,9 @@ function RootStack() {
       }}>
       <Stack.Protected guard={!!profile}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="chat" options={{ headerShown: false }} />
         <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade' }} />
-        <Stack.Screen name="studio" options={{ title: 'Wallpaper Studio' }} />
+        <Stack.Screen name="camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade' }} />
       </Stack.Protected>
       <Stack.Screen name="setup" options={{ title: profile ? 'Edit your doll' : 'Create your doll' }} />
     </Stack>
@@ -41,8 +43,10 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ProfileProvider>
-        <StatusBar style="dark" />
-        <RootStack />
+        <ConversationProvider>
+          <StatusBar style="dark" />
+          <RootStack />
+        </ConversationProvider>
       </ProfileProvider>
     </GestureHandlerRootView>
   );

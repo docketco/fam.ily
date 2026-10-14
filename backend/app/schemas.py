@@ -8,12 +8,27 @@ from pydantic import BaseModel, Field, field_validator
 
 class Emotion(str, Enum):
     HAPPY = "HAPPY"
-    SURPRISED = "SURPRISED"
+    LOVING = "LOVING"
     TEASING = "TEASING"
+    SURPRISED = "SURPRISED"
     SLEEPY = "SLEEPY"
+    SAD = "SAD"
+    POUTY = "POUTY"
 
 
-SceneEffect = Literal["none", "rain", "snow", "sparkle", "steam", "petals"]
+class ChatMode(str, Enum):
+    """How the human is talking to the doll right now."""
+
+    CHAT = "chat"  # texting in the chat screen
+    CALL = "call"  # voice call, no camera
+    CAMERA = "camera"  # voice or text while showing the camera
+
+
+class Turn(BaseModel):
+    """One earlier line of the conversation, so the doll remembers what was said."""
+
+    role: Literal["user", "doll"]
+    text: str = Field(max_length=1000)
 
 
 class PersonaConfig(BaseModel):
@@ -105,28 +120,7 @@ class VoiceSaveResponse(BaseModel):
     voice_id: str
 
 
-# ---- AI scenes, stickers, text helpers --------------------------------------------------------
-
-
-class ImagePromptRequest(BaseModel):
-    prompt: str = Field(min_length=2, max_length=400)
-
-
-class SceneResponse(BaseModel):
-    image_base64: str
-    mime_type: str
-    effect: SceneEffect
-    provider: str
-
-
-class StickerResponse(BaseModel):
-    image_base64: str
-    mime_type: str
-    provider: str
-
-
-class SceneEffectChoice(BaseModel):
-    effect: SceneEffect = Field(description="The ambient animation that best fits the scene.")
+# ---- AI text helpers ---------------------------------------------------------------------------
 
 
 class PersonaDraftRequest(BaseModel):
@@ -142,5 +136,7 @@ class PersonaDraft(BaseModel):
     voice_description: str = Field(description="A description of how the doll's voice sounds, one sentence.")
 
 
-class QuoteResponse(BaseModel):
-    quote: str
+class CutoutResponse(BaseModel):
+    image_base64: str
+    mime_type: str
+    method: str

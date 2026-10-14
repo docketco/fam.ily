@@ -60,15 +60,6 @@
           "photosPermission": "Pick a photo of your plushie to bring it to life.",
           "cameraPermission": "Take a photo of your plushie to bring it to life."
         }
-      ],
-      [
-        "expo-media-library",
-        {
-          "photosPermission": "Save wallpapers of your doll to your photo library.",
-          "savePhotosPermission": "Save wallpapers of your doll to your photo library.",
-          "isAccessMediaLocationEnabled": false,
-          "granularPermissions": ["photo", "video"]
-        }
       ]
     ],
     "experiments": {

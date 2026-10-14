@@ -1,86 +1,76 @@
-import { Image, type ImageSource } from 'expo-image';
-import { useEffect, useMemo } from 'react';
-import { StyleSheet, Text, View, type ViewStyle, type StyleProp } from 'react-native';
-import Animated, {
-  type SharedValue,
-  useAnimatedStyle,
-  useFrameCallback,
-  useSharedValue,
-} from 'react-native-reanimated';
+import { Image } from 'expo-image';
+import { useEffect } from 'react';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useFrameCallback, useSharedValue } from 'react-native-reanimated';
 
 import { colors } from '@/lib/theme';
 
 import { computePose, type DollEmotion, emotionHops, motionModeFor, type MotionMode } from './pose';
 
 export interface PlushieAvatarProps {
-  /** Background-removed PNG works best; any photo is shown inside a soft round frame. */
-  source: ImageSource | string | number | null;
+  /** Photo of the plushie: ideally its cutout (transparent PNG), otherwise any photo. */
+  source: string | null;
+  /** True when `source` is a cutout; the doll then stands on screen with no frame around it. */
+  cutout?: boolean;
   emotion?: DollEmotion;
   isSpeaking?: boolean;
   size?: number;
   showShadow?: boolean;
-  /** Set when the image already has a transparent background, to drop the round frame. */
-  transparent?: boolean;
-  /** Override the motion (the wallpaper studio uses 'loop5' for a seamless 5 s loop). */
-  mode?: MotionMode;
-  /** External clock in seconds. When given, the avatar does not run its own (used for frame export). */
-  clock?: SharedValue<number>;
-  /** Small emoji badge reacting to the emotion. */
+  /** Small floating badge that names the feeling (heart, tear, huff…). */
   showBadge?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
 const BADGES: Partial<Record<DollEmotion, string>> = {
-  happy: '💗',
+  happy: '✨',
+  loving: '💕',
   surprised: '❗',
   teasing: '😏',
   sleepy: '💤',
+  sad: '💧',
+  pouty: '💢',
   thinking: '💭',
 };
 
 /**
- * Animated 2.5D plushie. Idle: breathing bob + tilt. Speaking: bouncy bob with a scale pulse.
- * Happy/surprised: a quick double hop, then back to idle. Lightweight: one frame callback,
- * transforms only, everything runs on the UI thread.
+ * Animated 2.5D plushie. Every emotion has its own body language (sway, droop, huff, tilt),
+ * talking layers a bounce on top, and happy/surprised/loving start with a double hop.
+ * Transforms only, driven on the UI thread by one frame callback.
  */
 export function PlushieAvatar({
   source,
+  cutout = false,
   emotion = 'idle',
   isSpeaking = false,
   size = 140,
   showShadow = true,
-  transparent = false,
-  mode,
-  clock,
   showBadge = false,
   style,
 }: PlushieAvatarProps) {
-  const ownClock = useSharedValue(0);
+  const clock = useSharedValue(0);
   const hopStart = useSharedValue(-10);
-  const motion = useSharedValue<MotionMode>(mode ?? motionModeFor(emotion, isSpeaking));
-  const runOwnClock = !clock;
+  const motion = useSharedValue<MotionMode>(motionModeFor(emotion));
+  const speaking = useSharedValue(isSpeaking);
 
-  const frame = useFrameCallback((info) => {
-    ownClock.value += (info.timeSincePreviousFrame ?? 16) / 1000;
-  }, runOwnClock);
-
-  useEffect(() => {
-    frame.setActive(runOwnClock);
-  }, [frame, runOwnClock]);
+  useFrameCallback((info) => {
+    clock.value += (info.timeSincePreviousFrame ?? 16) / 1000;
+  });
 
   useEffect(() => {
-    motion.set(mode ?? motionModeFor(emotion, isSpeaking));
-  }, [mode, emotion, isSpeaking, motion]);
+    motion.set(motionModeFor(emotion));
+    if (emotionHops(emotion)) hopStart.set(clock.get());
+  }, [emotion, motion, hopStart, clock]);
 
   useEffect(() => {
-    if (emotionHops(emotion)) hopStart.set((clock ?? ownClock).get());
-  }, [emotion, clock, ownClock, hopStart]);
+    speaking.set(isSpeaking);
+  }, [isSpeaking, speaking]);
 
   const bodyStyle = useAnimatedStyle(() => {
-    const t = clock ? clock.value : ownClock.value;
-    const p = computePose(motion.value, t, t - hopStart.value);
+    const t = clock.value;
+    const p = computePose(motion.value, t, t - hopStart.value, speaking.value);
     return {
       transform: [
+        { translateX: p.translateX },
         { translateY: p.translateY },
         { rotate: `${p.rotateDeg}deg` },
         { scaleX: p.scaleX },
@@ -90,33 +80,37 @@ export function PlushieAvatar({
   });
 
   const shadowStyle = useAnimatedStyle(() => {
-    const t = clock ? clock.value : ownClock.value;
-    const p = computePose(motion.value, t, t - hopStart.value);
+    const t = clock.value;
+    const p = computePose(motion.value, t, t - hopStart.value, speaking.value);
     return { opacity: p.shadowOpacity, transform: [{ scaleX: p.shadowScale }, { scaleY: p.shadowScale }] };
   });
 
-  const imageSource = useMemo(() => (typeof source === 'string' ? { uri: source } : source), [source]);
   const badge = showBadge ? BADGES[emotion] : undefined;
 
   return (
-    <View style={[{ width: size, height: size * 1.12 }, styles.root, style]} pointerEvents="box-none">
+    <View style={[{ width: size, height: size * 1.1 }, styles.root, style]} pointerEvents="box-none">
       {showShadow && (
-        <Animated.View
-          style={[
-            styles.shadow,
-            { width: size * 0.56, height: size * 0.08, borderRadius: size, bottom: size * 0.03 },
-            shadowStyle,
-          ]}
-        />
+        // A soft contact shadow: stacked ellipses (circles squashed flat) fading outward.
+        <Animated.View style={[styles.shadowWrap, { width: size * 0.7, height: size * 0.12, bottom: 0 }, shadowStyle]}>
+          {[1, 0.78, 0.56].map((k) => (
+            <View
+              key={k}
+              style={[
+                styles.shadow,
+                { width: size * 0.7 * k, height: size * 0.7 * k, borderRadius: size, transform: [{ scaleY: 0.16 / k }] },
+              ]}
+            />
+          ))}
+        </Animated.View>
       )}
       <Animated.View style={[{ width: size, height: size }, styles.body, bodyStyle]}>
-        {imageSource ? (
+        {source ? (
           <Image
-            source={imageSource}
-            contentFit={transparent ? 'contain' : 'cover'}
+            source={{ uri: source }}
+            contentFit={cutout ? 'contain' : 'cover'}
             style={[
               { width: size, height: size },
-              !transparent && { borderRadius: size / 2, borderWidth: size * 0.035, borderColor: '#fff' },
+              !cutout && { borderRadius: size / 2, borderWidth: size * 0.035, borderColor: '#fff' },
             ]}
             transition={150}
           />
@@ -126,8 +120,8 @@ export function PlushieAvatar({
           </View>
         )}
         {badge && (
-          <View style={[styles.badge, { right: -size * 0.04, top: -size * 0.04 }]}>
-            <Text style={{ fontSize: Math.max(14, size * 0.16) }}>{badge}</Text>
+          <View style={[styles.badge, { right: size * 0.02, top: size * 0.02 }]}>
+            <Text style={{ fontSize: Math.max(14, size * 0.13) }}>{badge}</Text>
           </View>
         )}
       </Animated.View>
@@ -138,7 +132,8 @@ export function PlushieAvatar({
 const styles = StyleSheet.create({
   root: { alignItems: 'center', justifyContent: 'flex-start' },
   body: { alignItems: 'center', justifyContent: 'center' },
-  shadow: { position: 'absolute', backgroundColor: '#000' },
+  shadowWrap: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  shadow: { position: 'absolute', backgroundColor: 'rgba(42,26,36,0.13)' },
   placeholder: { backgroundColor: colors.pinkSoft, alignItems: 'center', justifyContent: 'center' },
   badge: {
     position: 'absolute',

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
@@ -10,21 +9,18 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 from pydantic import ValidationError
 
-from . import imagegen, llm, prompt, tts, wallpaper
+from . import cutout, llm, prompt, tts
 from .config import Settings, get_settings
 from .schemas import (
-    ImagePromptRequest,
+    ChatMode,
+    CutoutResponse,
     PersonaConfig,
     PersonaDraft,
     PersonaDraftRequest,
-    QuoteResponse,
     ReactResponse,
-    SceneEffectChoice,
-    SceneResponse,
-    StickerResponse,
+    Turn,
     Voice,
     VoiceDesignRequest,
     VoiceDesignResponse,
@@ -55,7 +51,6 @@ def health(settings: SettingsDep) -> dict:
         "status": "ok",
         "llm_provider": settings.resolved_llm_provider(),
         "tts_provider": "elevenlabs" if settings.elevenlabs_api_key else "none",
-        "image_provider": settings.resolved_image_provider(),
         "auth_required": bool(settings.app_api_key),
     }
 
@@ -69,6 +64,22 @@ async def _read_limited(upload: UploadFile, limit: int, label: str) -> bytes:
     return data
 
 
+MAX_HISTORY_TURNS = 16
+
+
+def _parse_history(raw: str) -> list[Turn]:
+    if not raw.strip():
+        return []
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            raise ValueError("history must be a list")
+        turns = [Turn.model_validate(t) for t in items]
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid history: {exc}") from exc
+    return turns[-MAX_HISTORY_TURNS:]
+
+
 def _parse_persona(raw: str) -> PersonaConfig:
     try:
         return PersonaConfig.model_validate(json.loads(raw))
@@ -79,27 +90,31 @@ def _parse_persona(raw: str) -> PersonaConfig:
 @app.post("/api/doll/react", response_model=ReactResponse, dependencies=[Depends(require_app_key)])
 async def doll_react(
     settings: SettingsDep,
-    snapshot: Annotated[UploadFile, File(description="Current camera frame (JPEG)")],
     persona_config: Annotated[str, Form(description="PersonaConfig as a JSON string")],
     user_speech_text: Annotated[str, Form()] = "",
-    user_audio: Annotated[UploadFile | None, File(description="Optional recorded question (m4a/wav)")] = None,
+    mode: Annotated[ChatMode, Form(description="chat, call or camera")] = ChatMode.CAMERA,
+    history: Annotated[str, Form(description='Recent turns as JSON: [{"role": "user"|"doll", "text": "..."}]')] = "",
+    snapshot: Annotated[UploadFile | None, File(description="Camera frame (JPEG), camera mode only")] = None,
+    user_audio: Annotated[UploadFile | None, File(description="Recorded speech (m4a/wav)")] = None,
 ) -> ReactResponse:
     persona = _parse_persona(persona_config)
+    turns = _parse_history(history)
 
-    image_mime = (snapshot.content_type or "image/jpeg").lower()
-    if image_mime not in IMAGE_TYPES:
-        raise HTTPException(status_code=415, detail=f"Unsupported snapshot type {image_mime}")
-    image_bytes = await _read_limited(snapshot, settings.max_image_bytes, "snapshot")
+    image_bytes = image_mime = None
+    if snapshot is not None and snapshot.filename:
+        image_mime = (snapshot.content_type or "image/jpeg").lower()
+        if image_mime not in IMAGE_TYPES:
+            raise HTTPException(status_code=415, detail=f"Unsupported snapshot type {image_mime}")
+        image_bytes = await _read_limited(snapshot, settings.max_image_bytes, "snapshot")
 
     audio_bytes = audio_mime = None
     if user_audio is not None and user_audio.filename:
         audio_bytes = await _read_limited(user_audio, settings.max_audio_bytes, "user_audio")
         audio_mime = user_audio.content_type
 
+    req = llm.Request(persona, user_speech_text, image_bytes, image_mime, audio_bytes, audio_mime, mode, turns)
     try:
-        reply, provider = await llm.generate_reply(
-            settings, persona, image_bytes, image_mime, user_speech_text, audio_bytes, audio_mime
-        )
+        reply, provider = await llm.generate_reply(settings, req)
     except llm.LLMError as exc:
         log.error("LLM failure: %s", exc)
         raise HTTPException(status_code=502, detail="The doll's brain is unavailable, try again.") from exc
@@ -135,25 +150,6 @@ async def preview_voice(settings: SettingsDep, body: VoicePreviewRequest) -> Voi
         log.error("TTS preview failure: %s", exc)
         raise HTTPException(status_code=502, detail="Voice preview unavailable") from exc
     return VoicePreviewResponse(audio_base64=audio_b64, audio_mime_type=mime, tts_provider=provider)
-
-
-@app.post("/api/wallpaper/render", dependencies=[Depends(require_app_key)])
-async def render_wallpaper(
-    settings: SettingsDep,
-    frames: Annotated[list[UploadFile], File(description="Ordered frames of one loop (JPEG/PNG)")],
-    fps: Annotated[int, Form(ge=1, le=60)] = 15,
-    repeat: Annotated[int, Form(ge=1, le=6)] = 1,
-    output_fps: Annotated[int | None, Form(ge=1, le=60)] = None,
-) -> Response:
-    if len(frames) > settings.max_wallpaper_frames:
-        raise HTTPException(status_code=413, detail=f"At most {settings.max_wallpaper_frames} frames")
-    data = [await _read_limited(f, settings.max_wallpaper_frame_bytes, "frame") for f in frames]
-    try:
-        mp4 = await run_in_threadpool(wallpaper.encode_mp4, data, fps, repeat, output_fps)
-    except wallpaper.EncodeError as exc:
-        log.error("Encode failure: %s", exc)
-        raise HTTPException(status_code=422, detail="Could not encode video from frames") from exc
-    return Response(content=mp4, media_type="video/mp4", headers={"Content-Disposition": 'attachment; filename="wallpaper.mp4"'})
 
 
 # ---- AI voice design ------------------------------------------------------------------------
@@ -203,47 +199,20 @@ async def draft_persona(settings: SettingsDep, body: PersonaDraftRequest) -> Per
     return draft
 
 
-@app.post("/api/doll/quote", response_model=QuoteResponse, dependencies=[Depends(require_app_key)])
-async def doll_quote(settings: SettingsDep, persona: PersonaConfig) -> QuoteResponse:
+# ---- plushie cutout (fallback when the phone can't do it on-device) ----------------------------
+
+
+@app.post("/api/doll/cutout", response_model=CutoutResponse, dependencies=[Depends(require_app_key)])
+async def doll_cutout(
+    settings: SettingsDep,
+    photo: Annotated[UploadFile, File(description="Photo of the plushie (JPEG/PNG)")],
+) -> CutoutResponse:
+    mime = (photo.content_type or "image/jpeg").lower()
+    if mime not in IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported photo type {mime}")
+    data = await _read_limited(photo, settings.max_image_bytes, "photo")
     try:
-        result, _ = await llm.structured_text(settings, prompt.QUOTE_SYSTEM, prompt.persona_summary(persona), QuoteResponse)
-    except llm.LLMError as exc:
-        log.error("Quote failure: %s", exc)
-        raise HTTPException(status_code=502, detail="Couldn't write a quote right now.") from exc
-    quote = (result.quote if result else f"{persona.doll_name} missed you!").strip().strip('"')
-    return QuoteResponse(quote=quote[:80])
-
-
-# ---- AI scenes and stickers -----------------------------------------------------------------
-
-
-async def _scene_effect(settings: Settings, user_prompt: str) -> str:
-    try:
-        choice, _ = await llm.structured_text(settings, prompt.SCENE_EFFECT_SYSTEM, user_prompt, SceneEffectChoice)
-    except llm.LLMError as exc:
-        log.warning("Scene effect classification failed: %s", exc)
-        choice = None
-    return choice.effect if choice else llm.fallback_effect(user_prompt)
-
-
-@app.post("/api/scene/generate", response_model=SceneResponse, dependencies=[Depends(require_app_key)])
-async def generate_scene(settings: SettingsDep, body: ImagePromptRequest) -> SceneResponse:
-    image_task = imagegen.generate(settings, prompt.scene_image_prompt(body.prompt), "scene")
-    try:
-        (raw, provider), effect = await asyncio.gather(image_task, _scene_effect(settings, body.prompt))
-    except imagegen.ImageGenError as exc:
-        log.error("Scene generation failure: %s", exc)
-        raise HTTPException(status_code=502, detail="Couldn't paint that scene, try rewording it.") from exc
-    data = await run_in_threadpool(imagegen.finish_scene, raw) if raw else imagegen.placeholder_scene(body.prompt)
-    return SceneResponse(image_base64=base64.b64encode(data).decode(), mime_type="image/jpeg", effect=effect, provider=provider)
-
-
-@app.post("/api/sticker/generate", response_model=StickerResponse, dependencies=[Depends(require_app_key)])
-async def generate_sticker(settings: SettingsDep, body: ImagePromptRequest) -> StickerResponse:
-    try:
-        raw, provider = await imagegen.generate(settings, prompt.sticker_image_prompt(body.prompt), "sticker")
-    except imagegen.ImageGenError as exc:
-        log.error("Sticker generation failure: %s", exc)
-        raise HTTPException(status_code=502, detail="Couldn't make that sticker, try rewording it.") from exc
-    data = await run_in_threadpool(imagegen.finish_sticker, raw) if raw else imagegen.placeholder_sticker(body.prompt)
-    return StickerResponse(image_base64=base64.b64encode(data).decode(), mime_type="image/png", provider=provider)
+        png = await run_in_threadpool(cutout.cut_out, data)
+    except cutout.CutoutError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return CutoutResponse(image_base64=base64.b64encode(png).decode(), mime_type="image/png", method="edge-fill")

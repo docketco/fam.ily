@@ -1,7 +1,16 @@
 import { appKey, stripSlash } from './config';
 import type { PersonaConfig } from './profile';
 
-export type BackendEmotion = 'HAPPY' | 'SURPRISED' | 'TEASING' | 'SLEEPY';
+export type BackendEmotion = 'HAPPY' | 'LOVING' | 'TEASING' | 'SURPRISED' | 'SLEEPY' | 'SAD' | 'POUTY';
+
+/** How the user is talking to the doll: texting, a voice call, or a call with the camera on. */
+export type ChatMode = 'chat' | 'call' | 'camera';
+
+/** One earlier line of the conversation, sent so the doll remembers what was said. */
+export interface HistoryTurn {
+  role: 'user' | 'doll';
+  text: string;
+}
 
 export interface ReactResponse {
   spoken_text: string;
@@ -20,20 +29,7 @@ export interface Health {
   status: 'ok';
   llm_provider: Provider;
   tts_provider: 'elevenlabs' | 'none';
-  image_provider: Provider;
   auth_required: boolean;
-}
-
-export type SceneEffect = 'none' | 'rain' | 'snow' | 'sparkle' | 'steam' | 'petals';
-
-export interface GeneratedImage {
-  image_base64: string;
-  mime_type: string;
-  provider: string;
-}
-
-export interface GeneratedScene extends GeneratedImage {
-  effect: SceneEffect;
 }
 
 export interface PersonaDraft {
@@ -120,15 +116,19 @@ export class DollApi {
   }
 
   async react(args: {
-    snapshot: LocalFile;
     persona: PersonaConfig;
+    mode: ChatMode;
     userSpeechText?: string;
+    history?: HistoryTurn[];
+    snapshot?: LocalFile | null;
     userAudio?: LocalFile | null;
   }): Promise<ReactResponse> {
     const form = new FormData();
-    form.append('snapshot', args.snapshot as unknown as Blob);
     form.append('persona_config', JSON.stringify(args.persona));
+    form.append('mode', args.mode);
     form.append('user_speech_text', args.userSpeechText ?? '');
+    if (args.history?.length) form.append('history', JSON.stringify(args.history));
+    if (args.snapshot) form.append('snapshot', args.snapshot as unknown as Blob);
     if (args.userAudio) form.append('user_audio', args.userAudio as unknown as Blob);
     const res = await this.request('/api/doll/react', { method: 'POST', headers: this.headers(), body: form }, 45000);
     return res.json();
@@ -147,13 +147,16 @@ export class DollApi {
     return res.json();
   }
 
-  draftPersona(idea: string, dollName: string, inspiration: string): Promise<PersonaDraft> {
-    return this.postJson('/api/persona/draft', { idea, doll_name: dollName, inspiration }, 30000);
+  /** Server fallback for cutting the plushie out of its photo (plain backgrounds only). */
+  async cutout(photo: LocalFile): Promise<{ image_base64: string; mime_type: string }> {
+    const form = new FormData();
+    form.append('photo', photo as unknown as Blob);
+    const res = await this.request('/api/doll/cutout', { method: 'POST', headers: this.headers(), body: form }, 30000);
+    return res.json();
   }
 
-  async quote(persona: PersonaConfig): Promise<string> {
-    const res = await this.postJson<{ quote: string }>('/api/doll/quote', persona, 20000);
-    return res.quote;
+  draftPersona(idea: string, dollName: string, inspiration: string): Promise<PersonaDraft> {
+    return this.postJson('/api/persona/draft', { idea, doll_name: dollName, inspiration }, 30000);
   }
 
   async designVoice(description: string, sampleText?: string): Promise<DesignedVoice[]> {
@@ -174,29 +177,4 @@ export class DollApi {
     return res.voice_id;
   }
 
-  generateScene(prompt: string): Promise<GeneratedScene> {
-    return this.postJson('/api/scene/generate', { prompt }, 120000);
-  }
-
-  generateSticker(prompt: string): Promise<GeneratedImage> {
-    return this.postJson('/api/sticker/generate', { prompt }, 120000);
-  }
-
-  /**
-   * Uploads ordered frames of one loop and returns the encoded MP4 bytes.
-   * `outputFps` above `fps` repeats frames (Live Photos expect a camera-like 30 fps).
-   */
-  async renderWallpaper(frames: LocalFile[], fps: number, repeat = 1, outputFps?: number): Promise<ArrayBuffer> {
-    const form = new FormData();
-    frames.forEach((f) => form.append('frames', f as unknown as Blob));
-    form.append('fps', String(fps));
-    form.append('repeat', String(repeat));
-    if (outputFps) form.append('output_fps', String(outputFps));
-    const res = await this.request(
-      '/api/wallpaper/render',
-      { method: 'POST', headers: this.headers({ Accept: 'video/mp4' }), body: form },
-      180000,
-    );
-    return res.arrayBuffer();
-  }
 }
